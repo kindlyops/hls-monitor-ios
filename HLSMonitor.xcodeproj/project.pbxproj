@@ -30,7 +30,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		187AF0F92E828D1000505E98 /* Exceptions for "HLSMonitor" folder in "HLSMonitor" target */ = {
+		187AF0F92E828D1000505E98 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
@@ -43,7 +43,7 @@
 		184F590E2E6ACF1E00FBE038 /* HLSMonitor */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				187AF0F92E828D1000505E98 /* Exceptions for "HLSMonitor" folder in "HLSMonitor" target */,
+				187AF0F92E828D1000505E98 /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
 			);
 			path = HLSMonitor;
 			sourceTree = "<group>";
@@ -425,7 +425,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.organizationName.HLSMonitor;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kindlyops.HLSMonitor;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -459,7 +459,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.organizationName.HLSMonitor;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kindlyops.HLSMonitor;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
