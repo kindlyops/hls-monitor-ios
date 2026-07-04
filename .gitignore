@@ -1,0 +1,8 @@
+# Milq metadata (conversation history, project settings, etc.)
+.milq_meta/
+
+# Build artifacts
+*_build/
+
+# macOS
+.DS_Store
