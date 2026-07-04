@@ -1,0 +1,182 @@
+//
+//  MonitorScripts.swift
+//  HLSMonitor
+//
+//  JavaScript injected into every page to intercept HLS network traffic
+//  (fetch + XMLHttpRequest), observe <video> elements, and stream
+//  playback stats back to the native layer.
+//
+
+import Foundation
+
+enum MonitorScripts {
+
+    static let interception = """
+    (function() {
+        if (window.__hlsMonitorInstalled) { return; }
+        window.__hlsMonitorInstalled = true;
+
+        function post(payload) {
+            try {
+                window.webkit.messageHandlers.hlsMonitor.postMessage(payload);
+            } catch (e) {}
+        }
+
+        function classify(url) {
+            if (!url) { return null; }
+            var clean = url.split('?')[0].toLowerCase();
+            if (clean.endsWith('.m3u8') || clean.indexOf('.m3u8') !== -1) { return 'manifest'; }
+            if (clean.endsWith('.ts') || clean.endsWith('.m4s') || clean.endsWith('.mp4') ||
+                clean.endsWith('.aac') || clean.endsWith('.fmp4') || clean.indexOf('/segment') !== -1) {
+                return 'segment';
+            }
+            return null;
+        }
+
+        function absolute(url) {
+            try { return new URL(url, document.baseURI).href; } catch (e) { return url; }
+        }
+
+        // ---- fetch interception ----
+        var origFetch = window.fetch;
+        window.fetch = function(input, init) {
+            var url = (typeof input === 'string') ? input : (input && input.url);
+            var kind = classify(url);
+            if (kind === 'manifest') {
+                post({ type: 'manifestRequest', url: absolute(url) });
+                return origFetch.apply(this, arguments);
+            }
+            if (kind === 'segment') {
+                var started = performance.now();
+                return origFetch.apply(this, arguments).then(function(response) {
+                    var bytes = parseInt(response.headers.get('content-length') || '0', 10);
+                    post({
+                        type: 'segment',
+                        url: absolute(url),
+                        durationMs: performance.now() - started,
+                        bytes: bytes
+                    });
+                    return response;
+                });
+            }
+            return origFetch.apply(this, arguments);
+        };
+
+        // ---- XHR interception ----
+        var origOpen = XMLHttpRequest.prototype.open;
+        var origSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function(method, url) {
+            this.__hlsUrl = url;
+            this.__hlsKind = classify(url);
+            return origOpen.apply(this, arguments);
+        };
+        XMLHttpRequest.prototype.send = function() {
+            var xhr = this;
+            if (xhr.__hlsKind === 'manifest') {
+                post({ type: 'manifestRequest', url: absolute(xhr.__hlsUrl) });
+            } else if (xhr.__hlsKind === 'segment') {
+                var started = performance.now();
+                xhr.addEventListener('loadend', function() {
+                    var bytes = 0;
+                    try {
+                        bytes = parseInt(xhr.getResponseHeader('content-length') || '0', 10);
+                        if (!bytes && xhr.response && xhr.response.byteLength) {
+                            bytes = xhr.response.byteLength;
+                        }
+                    } catch (e) {}
+                    post({
+                        type: 'segment',
+                        url: absolute(xhr.__hlsUrl),
+                        durationMs: performance.now() - started,
+                        bytes: bytes
+                    });
+                });
+            }
+            return origSend.apply(this, arguments);
+        };
+
+        // ---- video element observation ----
+        var watchedVideos = new WeakSet();
+
+        function checkSrc(el) {
+            var src = el.currentSrc || el.src || '';
+            if (classify(src) === 'manifest') {
+                post({ type: 'manifestRequest', url: absolute(src) });
+            }
+        }
+
+        function watchVideo(video) {
+            if (watchedVideos.has(video)) { return; }
+            watchedVideos.add(video);
+            post({ type: 'event', name: 'videoFound', detail: video.currentSrc || video.src || '' });
+            checkSrc(video);
+
+            ['play', 'pause', 'ended', 'waiting', 'stalled', 'loadedmetadata'].forEach(function(name) {
+                video.addEventListener(name, function() {
+                    post({ type: 'event', name: name, detail: '' });
+                    checkSrc(video);
+                });
+            });
+            video.addEventListener('resize', function() {
+                if (video.videoWidth > 0) {
+                    post({
+                        type: 'event',
+                        name: 'qualityChange',
+                        detail: video.videoWidth + 'x' + video.videoHeight
+                    });
+                }
+            });
+            video.addEventListener('error', function() {
+                var err = video.error;
+                post({ type: 'event', name: 'error', detail: err ? ('code ' + err.code) : 'unknown' });
+            });
+        }
+
+        function scan() {
+            document.querySelectorAll('video').forEach(watchVideo);
+        }
+
+        var observer = new MutationObserver(scan);
+        function startObserving() {
+            if (document.body) {
+                observer.observe(document.body, { childList: true, subtree: true });
+                scan();
+            } else {
+                setTimeout(startObserving, 250);
+            }
+        }
+        startObserving();
+        document.addEventListener('DOMContentLoaded', scan);
+
+        // ---- periodic playback stats ----
+        setInterval(function() {
+            var video = document.querySelector('video');
+            if (!video) { return; }
+            var buffered = 0;
+            try {
+                if (video.buffered.length > 0) {
+                    buffered = video.buffered.end(video.buffered.length - 1) - video.currentTime;
+                }
+            } catch (e) {}
+            var dropped = 0, total = 0;
+            try {
+                if (video.getVideoPlaybackQuality) {
+                    var q = video.getVideoPlaybackQuality();
+                    dropped = q.droppedVideoFrames;
+                    total = q.totalVideoFrames;
+                }
+            } catch (e) {}
+            post({
+                type: 'stats',
+                width: video.videoWidth,
+                height: video.videoHeight,
+                currentTime: video.currentTime,
+                buffered: Math.max(0, buffered),
+                dropped: dropped,
+                totalFrames: total,
+                paused: video.paused
+            });
+        }, 1000);
+    })();
+    """
+}
