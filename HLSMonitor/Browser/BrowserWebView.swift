@@ -39,6 +39,9 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.allowsBackForwardNavigationGestures = true
+        webView.scrollView.isScrollEnabled = true
+        webView.scrollView.alwaysBounceVertical = true
+        webView.scrollView.keyboardDismissMode = .interactive
 
         super.init()
 

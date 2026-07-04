@@ -11,6 +11,7 @@ struct ContentView: View {
     @StateObject private var monitor: HLSMonitorViewModel
     @StateObject private var browser: BrowserViewModel
     @FocusState private var urlFieldFocused: Bool
+    @State private var isBrowserExpanded = false
 
     init() {
         let monitor = HLSMonitorViewModel()
@@ -30,13 +31,16 @@ struct ContentView: View {
                     }
                     BrowserWebView(webView: browser.webView)
                 }
-                .frame(height: geometry.size.height / 2)
+                .frame(height: isBrowserExpanded ? geometry.size.height : geometry.size.height / 2)
 
-                Divider()
+                if !isBrowserExpanded {
+                    Divider()
 
-                MonitorPanelView(monitor: monitor)
-                    .frame(maxHeight: .infinity)
+                    MonitorPanelView(monitor: monitor)
+                        .frame(maxHeight: .infinity)
+                }
             }
+            .animation(.easeInOut(duration: 0.25), value: isBrowserExpanded)
         }
         .ignoresSafeArea(.keyboard)
     }
@@ -82,6 +86,14 @@ struct ContentView: View {
 
             Button(action: browser.reload) {
                 Image(systemName: "arrow.clockwise")
+            }
+
+            Button {
+                isBrowserExpanded.toggle()
+            } label: {
+                Image(systemName: isBrowserExpanded
+                      ? "arrow.down.right.and.arrow.up.left"
+                      : "arrow.up.left.and.arrow.down.right")
             }
         }
         .font(.subheadline)
