@@ -66,11 +66,12 @@ struct MonitorPanelView: View {
 
 // MARK: - Page indicator
 
-/// The bottom pill row. Reads its own safe-area inset via a GeometryReader-backed
-/// background so the pills always sit clear of the home indicator.
+/// The bottom pill row. Sits inside the window's safe area, so plain padding is
+/// enough to keep the pills clear of the home indicator. It must not feed
+/// geometry (e.g. safe-area insets) back into its own padding via @State — that
+/// creates a layout feedback loop that hangs the app at launch.
 private struct PageIndicatorBar: View {
     @Binding var selectedCard: Int
-    @State private var bottomInset: CGFloat = 0
 
     var body: some View {
         HStack(spacing: 6) {
@@ -98,17 +99,8 @@ private struct PageIndicatorBar: View {
             }
         }
         .padding(.top, 10)
-        .padding(.bottom, max(bottomInset, 8))
+        .padding(.bottom, 10)
         .frame(maxWidth: .infinity)
-        .background(
-            GeometryReader { proxy in
-                Color.clear
-                    .onAppear { bottomInset = proxy.safeAreaInsets.bottom }
-                    .onChange(of: proxy.safeAreaInsets.bottom) { _, newValue in
-                        bottomInset = newValue
-                    }
-            }
-        )
         .animation(.snappy(duration: 0.25), value: selectedCard)
     }
 }
