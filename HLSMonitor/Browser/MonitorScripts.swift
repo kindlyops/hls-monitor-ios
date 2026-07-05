@@ -475,6 +475,62 @@ enum MonitorScripts {
                     checkSrc(video);
                 });
             });
+
+            // Confirmed-stall detection. Raw waiting/stalled events are a
+            // weak proxy for viewer-visible freezes: they fire during
+            // startup buffering, after seeks, and (stalled especially)
+            // while playback continues fine from buffer. A stall only
+            // counts once playback has started, the element is playing,
+            // and currentTime stays frozen past a perceptual threshold.
+            // Exactly one stallStarted/stallEnded pair is posted per
+            // freeze, with the measured duration in ms on stallEnded.
+            var STALL_CONFIRM_MS = 250;
+            var stall = { suppressed: true, pendingSince: 0, frozenAt: -1, confirmed: false };
+            function endStall() {
+                if (stall.confirmed) {
+                    post({
+                        type: 'event',
+                        name: 'stallEnded',
+                        detail: String(Math.round(Date.now() - stall.pendingSince))
+                    });
+                }
+                stall.confirmed = false;
+                stall.pendingSince = 0;
+                stall.frozenAt = -1;
+            }
+            video.addEventListener('playing', function() {
+                endStall();
+                stall.suppressed = false;
+            });
+            // Startup buffering and seek buffering are expected loading,
+            // not interruptions: suppress until playback (re)starts.
+            video.addEventListener('seeking', function() {
+                endStall();
+                stall.suppressed = true;
+            });
+            ['pause', 'ended', 'emptied'].forEach(function(name) {
+                video.addEventListener(name, endStall);
+            });
+            ['waiting', 'stalled'].forEach(function(name) {
+                video.addEventListener(name, function() {
+                    if (stall.suppressed || video.paused || stall.pendingSince) { return; }
+                    stall.pendingSince = Date.now();
+                    stall.frozenAt = video.currentTime;
+                });
+            });
+            setInterval(function() {
+                if (!stall.pendingSince) { return; }
+                if (video.currentTime !== stall.frozenAt) {
+                    // Playback moved on: a confirmed stall just ended, an
+                    // unconfirmed one was too brief for anyone to see.
+                    endStall();
+                    return;
+                }
+                if (!stall.confirmed && Date.now() - stall.pendingSince >= STALL_CONFIRM_MS) {
+                    stall.confirmed = true;
+                    post({ type: 'event', name: 'stallStarted', detail: '' });
+                }
+            }, 100);
             video.addEventListener('resize', function() {
                 if (video.videoWidth > 0) {
                     post({

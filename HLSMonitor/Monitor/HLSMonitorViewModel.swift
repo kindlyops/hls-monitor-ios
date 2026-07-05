@@ -34,6 +34,7 @@ final class HLSMonitorViewModel: ObservableObject {
     private var sessionStart: Date?
     private var sessionDownloadTimes: [Double] = []
     private var sessionStallCount = 0
+    private var sessionStallSeconds: Double = 0
     private var sessionGapCount = 0
     private var sessionQualitySwitchCount = 0
     private var sessionEvents: [QualityEvent] = []
@@ -71,6 +72,7 @@ final class HLSMonitorViewModel: ObservableObject {
         sessionStart = nil
         sessionDownloadTimes.removeAll()
         sessionStallCount = 0
+        sessionStallSeconds = 0
         sessionGapCount = 0
         sessionQualitySwitchCount = 0
         sessionEvents.removeAll()
@@ -91,6 +93,7 @@ final class HLSMonitorViewModel: ObservableObject {
             failureCount: segments.failureCount,
             gapCount: sessionGapCount,
             stallCount: sessionStallCount,
+            stallSeconds: sessionStallSeconds,
             qualitySwitchCount: sessionQualitySwitchCount,
             medianDownloadMs: MonitoringSession.percentile(sessionDownloadTimes, 0.5),
             p95DownloadMs: MonitoringSession.percentile(sessionDownloadTimes, 0.95),
@@ -110,6 +113,7 @@ final class HLSMonitorViewModel: ObservableObject {
         sessionStart = nil
         sessionDownloadTimes.removeAll()
         sessionStallCount = 0
+        sessionStallSeconds = 0
         sessionGapCount = 0
         sessionQualitySwitchCount = 0
         sessionEvents.removeAll()
@@ -319,9 +323,19 @@ final class HLSMonitorViewModel: ObservableObject {
         case "recovered":
             log(.playback, "Playback recovered", detail: detail.isEmpty ? "resumed after foreground" : detail)
         case "waiting", "stalled":
+            // Raw browser signals only — they also fire during startup,
+            // seeks, and while playback continues from buffer. Confirmed
+            // freezes arrive separately as stallStarted/stallEnded.
+            log(.playback, "Buffering signal (\(name))")
+        case "stallStarted":
             sessionStallCount += 1
             recordSessionEvent(.stall)
-            log(.error, "Buffering (\(name))")
+            log(.error, "Playback stalled", detail: "video frozen while playing")
+        case "stallEnded":
+            let stallSecs = (Double(detail) ?? 0) / 1_000
+            sessionStallSeconds += stallSecs
+            log(.playback, "Playback resumed",
+                detail: String(format: "stalled for %.1fs", stallSecs))
         case "play", "pause", "ended", "loadedmetadata":
             log(.playback, name.capitalized, detail: detail)
         default:

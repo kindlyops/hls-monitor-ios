@@ -140,8 +140,7 @@ enum QualityReportHTML {
                         session.gapCount > 0 && session.stallCount == 0
                             ? "Silence between segments — absorbed by the buffer"
                             : "Silence over 2× target duration between segments"))
-          \(incidentRow("Playback stalls", session.stallCount, incidentMax,
-                        "Player reported waiting or stalled"))
+          \(incidentRow("Playback stalls", session.stallCount, incidentMax, stallMeaning(session)))
           \(incidentRow("Rendition switches", session.qualitySwitchCount, incidentMax,
                         "ABR changed quality level mid-play"))
         </table>
@@ -248,15 +247,16 @@ enum QualityReportHTML {
         _ s: MonitoringSession
     ) -> (label: String, color: String, impact: String) {
         let closeCalls = s.failureCount + s.gapCount
+        let frozen = stallDurationText(s)
         if s.stallCount >= 3 {
             return ("POOR", eventColors[.stall]!,
-                    "\(s.stallCount) visible playback interruptions.")
+                    "\(s.stallCount) visible playback interruptions\(frozen).")
         }
         if s.stallCount > 0 {
             let interruptions = s.stallCount == 1
                 ? "1 visible playback interruption"
                 : "\(s.stallCount) visible playback interruptions"
-            return ("DEGRADED", eventColors[.failure]!, "\(interruptions).")
+            return ("DEGRADED", eventColors[.failure]!, "\(interruptions)\(frozen).")
         }
         if closeCalls > 0 {
             let problems = closeCalls == 1 ? "1 delivery problem" : "\(closeCalls) delivery problems"
@@ -264,6 +264,21 @@ enum QualityReportHTML {
                     "None visible — \(problems) recovered before the buffer depleted.")
         }
         return ("HEALTHY", teal, "None — no delivery problems observed.")
+    }
+
+    /// " totaling 7.3s of frozen video" / " (2.3s of frozen video)", or empty
+    /// for sessions recorded before stall durations were measured.
+    private static func stallDurationText(_ s: MonitoringSession) -> String {
+        guard let seconds = s.stallSeconds, seconds >= 0.1 else { return "" }
+        let formatted = String(format: "%.1fs of frozen video", seconds)
+        return s.stallCount == 1 ? " (\(formatted))" : " totaling \(formatted)"
+    }
+
+    private static func stallMeaning(_ s: MonitoringSession) -> String {
+        if let seconds = s.stallSeconds, seconds >= 0.1, s.stallCount > 0 {
+            return String(format: "Video confirmed frozen mid-play — %.1fs total", seconds)
+        }
+        return "Video confirmed frozen mid-play beyond ¼ second"
     }
 
     private static func displayName(for url: String) -> String {
