@@ -7,8 +7,52 @@
 //  implementation behind ffmpeg's ebur128). Not thread-safe: confine each
 //  instance to one queue.
 //
+//  Compiled into both the app and the LoudnessBroadcast extension, which
+//  exchange levels through the shared app group.
+//
 
 import Foundation
+import CoreMedia
+
+/// K-weighted loudness measurements. Values are LUFS (peak is sample-peak
+/// dBFS); nil means silence / not yet enough audio for that window.
+struct AudioLoudness {
+    var momentary: Double?
+    var shortTerm: Double?
+    var integrated: Double?
+    var peakDbfs: Double?
+    /// True when the player keeps audio where the page cannot meter it
+    /// (WebKit's native pipeline or a third-party MSE player).
+    var unavailable: Bool = false
+}
+
+/// App-group plumbing between the broadcast extension (writer) and the
+/// app (reader).
+enum SharedLoudness {
+    static let appGroup = "group.com.kindlyops.HLSMonitor"
+    static let levelsKey = "HLSMonitor.systemLoudness"
+
+    static func encode(_ levels: AudioLoudness, at date: Date) -> [String: Double] {
+        var payload: [String: Double] = ["timestamp": date.timeIntervalSince1970]
+        payload["momentary"] = levels.momentary
+        payload["shortTerm"] = levels.shortTerm
+        payload["integrated"] = levels.integrated
+        payload["peakDbfs"] = levels.peakDbfs
+        return payload
+    }
+
+    /// Returns the stored levels and their write time, or nil if absent.
+    static func decode(_ payload: [String: Double]) -> (levels: AudioLoudness, date: Date)? {
+        guard let timestamp = payload["timestamp"] else { return nil }
+        let levels = AudioLoudness(
+            momentary: payload["momentary"],
+            shortTerm: payload["shortTerm"],
+            integrated: payload["integrated"],
+            peakDbfs: payload["peakDbfs"]
+        )
+        return (levels, Date(timeIntervalSince1970: timestamp))
+    }
+}
 
 final class LoudnessMeter {
 
@@ -173,5 +217,75 @@ final class LoudnessMeter {
             a2: (1 - k / q + k * k) / den
         )
         return (shelf, highpass)
+    }
+}
+
+// MARK: - CMSampleBuffer ingestion
+
+extension LoudnessMeter {
+
+    /// Feeds a captured audio sample buffer (e.g. from ReplayKit).
+    func process(sampleBuffer: CMSampleBuffer) {
+        guard let format = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee
+        else { return }
+
+        let bufferList = AudioBufferList.allocate(maximumBuffers: 8)
+        defer { free(bufferList.unsafeMutablePointer) }
+        var blockBuffer: CMBlockBuffer?
+        let status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer,
+            bufferListSizeNeededOut: nil,
+            bufferListOut: bufferList.unsafeMutablePointer,
+            bufferListSize: AudioBufferList.sizeInBytes(maximumBuffers: 8),
+            blockBufferAllocator: nil,
+            blockBufferMemoryAllocator: nil,
+            flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
+            blockBufferOut: &blockBuffer
+        )
+        guard status == noErr else { return }
+
+        let channels = Self.deinterleave(bufferList: bufferList, asbd: asbd)
+        guard !channels.isEmpty else { return }
+        process(channels: channels, sampleRate: asbd.mSampleRate)
+    }
+
+    /// Converts an AudioBufferList (Float32 or Int16, interleaved or planar)
+    /// into per-channel float arrays.
+    private static func deinterleave(
+        bufferList: UnsafeMutableAudioBufferListPointer,
+        asbd: AudioStreamBasicDescription
+    ) -> [[Float]] {
+        let isFloat = asbd.mFormatFlags & kAudioFormatFlagIsFloat != 0
+        let isPlanar = asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0
+        let bytesPerSample = Int(asbd.mBitsPerChannel) / 8
+        guard bytesPerSample == (isFloat ? 4 : 2) else { return [] }
+
+        func samples(in buffer: AudioBuffer) -> [Float] {
+            guard let data = buffer.mData else { return [] }
+            let count = Int(buffer.mDataByteSize) / bytesPerSample
+            if isFloat {
+                let floats = data.bindMemory(to: Float32.self, capacity: count)
+                return (0..<count).map { floats[$0] }
+            }
+            let ints = data.bindMemory(to: Int16.self, capacity: count)
+            return (0..<count).map { Float(ints[$0]) / 32768 }
+        }
+
+        if isPlanar {
+            return bufferList.map { samples(in: $0) }
+        }
+        guard let buffer = bufferList.first else { return [] }
+        let channelCount = max(Int(buffer.mNumberChannels), 1)
+        let interleaved = samples(in: buffer)
+        guard channelCount > 1 else { return [interleaved] }
+        let frames = interleaved.count / channelCount
+        var channels = Array(repeating: [Float](repeating: 0, count: frames), count: channelCount)
+        for frame in 0..<frames {
+            for channel in 0..<channelCount {
+                channels[channel][frame] = interleaved[frame * channelCount + channel]
+            }
+        }
+        return channels
     }
 }

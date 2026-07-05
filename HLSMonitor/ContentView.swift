@@ -49,6 +49,9 @@ struct ContentView: View {
             .animation(.easeInOut(duration: 0.25), value: isBrowserExpanded)
         }
         .ignoresSafeArea(.keyboard)
+        .onAppear {
+            monitor.startWatchingSystemLoudness()
+        }
         .onChange(of: scenePhase) { _, newPhase in
             // Returning to the foreground (e.g. after the phone was unlocked)
             // can leave the web view's video stalled. Re-prime playback.

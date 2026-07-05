@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import ReplayKit
 
 // MARK: - Live Pulse Header
 
@@ -371,17 +372,10 @@ struct LoudnessCard: View {
                         .frame(height: 36)
                     }
 
-                    if monitor.nativeMeteringActive {
-                        HStack {
-                            Text("Metering the device's audio output")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button("Stop") {
-                                monitor.stopNativeAudioMetering()
-                            }
-                            .font(.caption2.weight(.semibold))
-                        }
+                    if monitor.systemMeteringActive {
+                        Text("Metering device audio · stop from the red status indicator or Control Center")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                 }
             } else {
@@ -397,16 +391,10 @@ struct LoudnessCard: View {
     }
 
     private var meterDeviceAudioButton: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button {
-                monitor.startNativeAudioMetering()
-            } label: {
-                Label("Meter Device Audio", systemImage: "waveform.badge.mic")
-                    .font(.subheadline)
-            }
-            .buttonStyle(.bordered)
-            .buttonBorderShape(.capsule)
-            Text("Uses iOS in-app screen capture (audio only). A consent prompt and capture indicator appear; nothing is recorded.")
+        HStack(spacing: 10) {
+            BroadcastPickerButton()
+                .frame(width: 44, height: 44)
+            Text("Tap the record button and choose “HLSMonitor Loudness” to meter device audio. Levels only — nothing is recorded or uploaded.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -416,6 +404,20 @@ struct LoudnessCard: View {
     private func lufsText(_ value: Double?) -> String {
         value.map { String(format: "%.1f", $0) } ?? "−∞"
     }
+}
+
+/// System broadcast picker preconfigured for the LoudnessBroadcast
+/// extension. The system draws the record button; tapping it presents
+/// the iOS broadcast sheet.
+private struct BroadcastPickerButton: UIViewRepresentable {
+    func makeUIView(context: Context) -> RPSystemBroadcastPickerView {
+        let picker = RPSystemBroadcastPickerView(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
+        picker.preferredExtension = "com.kindlyops.HLSMonitor.LoudnessBroadcast"
+        picker.showsMicrophoneButton = false
+        return picker
+    }
+
+    func updateUIView(_ uiView: RPSystemBroadcastPickerView, context: Context) {}
 }
 
 /// Horizontal momentary-loudness bar on a -40...0 LUFS scale with a
