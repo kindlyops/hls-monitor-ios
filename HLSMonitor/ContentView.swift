@@ -23,24 +23,33 @@ struct ContentView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            // On the very first launch in landscape, SwiftUI can briefly report
-            // portrait-sized geometry before the scene finishes rotating. Fall
-            // back to the actual interface orientation until geometry settles so
-            // we render the correct layout immediately.
+            // Determine orientation from the geometry when it is valid, otherwise
+            // fall back to the live interface orientation. On the very first
+            // launch SwiftUI can briefly report portrait-sized geometry before the
+            // scene finishes rotating, so the fallback keeps the layout correct.
             let hasValidGeometry = geometry.size.width > 0 && geometry.size.height > 0
-            let geometryLandscape = geometry.size.width > geometry.size.height
-            let isLandscape = (!hasValidGeometry || geometry.size.width == geometry.size.height)
-                ? interfaceIsLandscape
-                : geometryLandscape
+            let isLandscape = hasValidGeometry
+                ? geometry.size.width > geometry.size.height
+                : interfaceIsLandscape
 
-            Group {
+            // Guarantee a valid drawing size even during the first layout pass so
+            // the web view never gets a zero-sized frame (which renders as a
+            // persistent black screen until the next layout).
+            let width = hasValidGeometry ? geometry.size.width : UIScreen.main.bounds.width
+            let height = hasValidGeometry ? geometry.size.height : UIScreen.main.bounds.height
+            let renderSize = CGSize(width: width, height: height)
+
+            ZStack {
+                Color(.systemGroupedBackground)
+                    .ignoresSafeArea()
+
                 if isLandscape {
-                    landscapeLayout(geometry: geometry)
+                    landscapeLayout(size: renderSize)
                 } else {
-                    portraitLayout(geometry: geometry)
+                    portraitLayout(size: renderSize)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(width: width, height: height)
             .animation(.easeInOut(duration: 0.25), value: isBrowserExpanded)
             .animation(.easeInOut(duration: 0.3), value: isLandscape)
         }
@@ -80,10 +89,10 @@ struct ContentView: View {
         }
     }
 
-    private func portraitLayout(geometry: GeometryProxy) -> some View {
+    private func portraitLayout(size: CGSize) -> some View {
         VStack(spacing: 0) {
             browserSection
-                .frame(height: isBrowserExpanded ? geometry.size.height : geometry.size.height / 2)
+                .frame(height: isBrowserExpanded ? size.height : size.height / 2)
 
             if !isBrowserExpanded {
                 Divider()
@@ -94,10 +103,10 @@ struct ContentView: View {
         }
     }
 
-    private func landscapeLayout(geometry: GeometryProxy) -> some View {
+    private func landscapeLayout(size: CGSize) -> some View {
         HStack(spacing: 0) {
             browserSection
-                .frame(width: isBrowserExpanded ? geometry.size.width : geometry.size.width / 2)
+                .frame(width: isBrowserExpanded ? size.width : size.width / 2)
 
             if !isBrowserExpanded {
                 Divider()
@@ -149,6 +158,26 @@ struct ContentView: View {
 
             Button(action: browser.reload) {
                 Image(systemName: "arrow.clockwise")
+            }
+
+            Menu {
+                Toggle(isOn: $browser.rememberURL) {
+                    Label("Remember URL", systemImage: "bookmark")
+                }
+                if browser.savedURL != nil {
+                    Section("Saved stream") {
+                        if let saved = browser.savedURL {
+                            Text(saved)
+                        }
+                        Button(role: .destructive) {
+                            browser.clearSavedURL()
+                        } label: {
+                            Label("Clear Saved URL", systemImage: "trash")
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: browser.savedURL != nil ? "bookmark.fill" : "bookmark")
             }
 
             Button {

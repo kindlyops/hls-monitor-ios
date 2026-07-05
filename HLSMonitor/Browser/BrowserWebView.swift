@@ -16,13 +16,38 @@ final class BrowserViewModel: NSObject, ObservableObject {
     @Published private(set) var canGoBack = false
     @Published private(set) var canGoForward = false
 
+    /// Whether "remember this URL" is enabled. When on, the last submitted URL
+    /// is persisted and restored on the next launch.
+    @Published var rememberURL: Bool {
+        didSet {
+            UserDefaults.standard.set(rememberURL, forKey: Self.rememberFlagKey)
+            if rememberURL {
+                persistCurrentURL()
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.savedURLKey)
+            }
+        }
+    }
+
+    /// The most recently saved livestream URL, if any.
+    @Published private(set) var savedURL: String?
+
     let monitor: HLSMonitorViewModel
     let webView: WKWebView
 
     private var observations: [NSKeyValueObservation] = []
 
+    private static let savedURLKey = "HLSMonitor.savedURL"
+    private static let rememberFlagKey = "HLSMonitor.rememberURL"
+
     init(monitor: HLSMonitorViewModel) {
         self.monitor = monitor
+
+        let defaults = UserDefaults.standard
+        // Default to remembering so a returning user's stream is right there.
+        let remember = defaults.object(forKey: Self.rememberFlagKey) as? Bool ?? true
+        self.rememberURL = remember
+        self.savedURL = defaults.string(forKey: Self.savedURLKey)
 
         let configuration = WKWebViewConfiguration()
         configuration.allowsInlineMediaPlayback = true
@@ -70,10 +95,24 @@ final class BrowserViewModel: NSObject, ObservableObject {
                 }
             }
         ]
+
+        // Restore a previously remembered stream so it opens automatically.
+        if rememberURL, let saved = savedURL, !saved.isEmpty {
+            urlText = saved
+            load(urlString: saved)
+        }
     }
 
     func submitURL() {
-        var text = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        load(urlString: text)
+    }
+
+    /// Normalizes a raw string into a URL, loads it, and persists it when
+    /// "remember URL" is enabled.
+    private func load(urlString: String) {
+        var text = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
         // Direct .m3u8 URLs get a tiny inline player page so monitoring works too.
@@ -87,12 +126,33 @@ final class BrowserViewModel: NSObject, ObservableObject {
         }
         guard let url = URL(string: text) else { return }
 
+        if rememberURL {
+            saveURL(text)
+        }
+
         monitor.reset()
         if url.path.lowercased().hasSuffix(".m3u8") {
             loadInlinePlayer(for: url)
         } else {
             webView.load(URLRequest(url: url))
         }
+    }
+
+    private func saveURL(_ urlString: String) {
+        savedURL = urlString
+        UserDefaults.standard.set(urlString, forKey: Self.savedURLKey)
+    }
+
+    private func persistCurrentURL() {
+        let text = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        saveURL(text)
+    }
+
+    /// Forgets the saved livestream URL so it won't be restored next launch.
+    func clearSavedURL() {
+        savedURL = nil
+        UserDefaults.standard.removeObject(forKey: Self.savedURLKey)
     }
 
     func reload() { webView.reload() }

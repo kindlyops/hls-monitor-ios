@@ -176,9 +176,15 @@ private struct LivePulseHeader: View {
         }
         .padding(12)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
-        .onReceive(ticker) { now = $0 }
+        .onReceive(ticker) { now = max($0, now) }
+        .onAppear { now = Date() }
         .animation(.snappy(duration: 0.3), value: monitor.segments.failureCount)
         .onChange(of: monitor.segments.count) {
+            // Refresh the clock the moment a new segment lands. The 1s ticker can
+            // be stale (it pauses while backgrounded), which would otherwise make
+            // a freshly-dated segment appear "in the future" and produce negative
+            // seconds-since-last readings after the app returns to the foreground.
+            now = Date()
             withAnimation(.easeOut(duration: 0.55)) { pulse = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
                 pulse = false
@@ -186,16 +192,23 @@ private struct LivePulseHeader: View {
         }
     }
 
+    /// Elapsed time since the last segment, never negative. Guards against a
+    /// stale `now` (e.g. the ticker not having fired yet) reporting the segment
+    /// as being in the future.
+    private var secondsSinceLastSegment: TimeInterval? {
+        guard let date = monitor.segments.lastSegmentDate else { return nil }
+        return max(0, now.timeIntervalSince(date))
+    }
+
     private var pulseColor: Color {
-        guard let date = monitor.segments.lastSegmentDate else { return Color(.systemGray3) }
-        let gap = now.timeIntervalSince(date)
+        guard let gap = secondsSinceLastSegment else { return Color(.systemGray3) }
         if gap > 12 { return .orange }
         return .green
     }
 
     private var agoColor: Color {
-        guard let date = monitor.segments.lastSegmentDate else { return .secondary }
-        return now.timeIntervalSince(date) > 12 ? .orange : .primary
+        guard let gap = secondsSinceLastSegment else { return .secondary }
+        return gap > 12 ? .orange : .primary
     }
 
     private var statusText: String {
@@ -204,8 +217,8 @@ private struct LivePulseHeader: View {
     }
 
     private var lastSegmentAgo: String {
-        guard let date = monitor.segments.lastSegmentDate else { return "—" }
-        let secs = Int(now.timeIntervalSince(date))
+        guard let gap = secondsSinceLastSegment else { return "—" }
+        let secs = Int(gap)
         if secs < 60 { return "\(secs)s" }
         return String(format: "%d:%02d", secs / 60, secs % 60)
     }
