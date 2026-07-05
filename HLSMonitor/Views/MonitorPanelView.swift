@@ -501,19 +501,27 @@ private struct LiveStatsView: View {
                     )
                 }
             }
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                StatCell(title: "Resolution", value: stats.resolutionText)
-                HStack(spacing: 6) {
+            // Three explicit columns instead of a LazyVGrid so the buffer gauge
+            // can span both rows of the middle column.
+            HStack(alignment: .center, spacing: 8) {
+                VStack(spacing: 8) {
+                    StatCell(title: "Resolution", value: stats.resolutionText)
+                    StatCell(title: "Dropped", value: "\(stats.droppedFrames)",
+                             color: stats.droppedFrames > 0 ? .orange : .primary)
+                }
+                VStack(spacing: 8) {
+                    StatCell(title: "Frames", value: stats.totalFrames > 0 ? "\(stats.totalFrames)" : "—")
                     StatCell(title: "Buffer", value: String(format: "%.1fs", stats.bufferedSeconds),
                              color: stats.bufferedSeconds < 2 && monitor.playback != nil ? .orange : .primary)
-                    BufferGauge(seconds: stats.bufferedSeconds)
-                        .frame(height: 30)
                 }
-                StatCell(title: "Position", value: timeString(stats.currentTime))
-                StatCell(title: "Dropped", value: "\(stats.droppedFrames)",
-                         color: stats.droppedFrames > 0 ? .orange : .primary)
-                StatCell(title: "Frames", value: stats.totalFrames > 0 ? "\(stats.totalFrames)" : "—")
-                StatCell(title: "Rendition", value: monitor.activeVariant.map { "\($0.height ?? 0)p" } ?? "—")
+                .overlay(alignment: .trailing) {
+                    BufferGauge(seconds: stats.bufferedSeconds)
+                        .padding(.vertical, 2)
+                }
+                VStack(spacing: 8) {
+                    StatCell(title: "Position", value: timeString(stats.currentTime))
+                    StatCell(title: "Rendition", value: monitor.activeVariant.map { "\($0.height ?? 0)p" } ?? "—")
+                }
             }
         }
         .padding(12)
@@ -730,6 +738,14 @@ private struct BufferGauge: View {
                 Capsule()
                     .fill(color)
                     .frame(height: max(geo.size.height * fill, 3))
+                // Notches marking the 10s and 20s levels, drawn in the card's
+                // background color so they read as subtle gaps in the bar.
+                ForEach([10.0, 20.0], id: \.self) { mark in
+                    Rectangle()
+                        .fill(Color(.secondarySystemGroupedBackground))
+                        .frame(height: 1.5)
+                        .offset(y: -geo.size.height * CGFloat(mark / Self.fullScale))
+                }
             }
         }
         .frame(width: 5)
