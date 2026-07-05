@@ -49,11 +49,6 @@ struct ContentView: View {
             .animation(.easeInOut(duration: 0.25), value: isBrowserExpanded)
         }
         .ignoresSafeArea(.keyboard)
-        .onAppear {
-            // Now that the hierarchy is mounted and the web view has a window,
-            // it's safe to auto-open a remembered stream.
-            browser.loadRememberedStreamIfNeeded()
-        }
         .onChange(of: scenePhase) { _, newPhase in
             // Returning to the foreground (e.g. after the phone was unlocked)
             // can leave the web view's video stalled. Re-prime playback.
@@ -86,12 +81,6 @@ struct ContentView: View {
         }
     }
 
-    private static let suggestedStreams: [(name: String, url: String)] = [
-        ("Mux Live Test", "https://stream.mux.com/v69RSHhFelSm4701snP22dYz2jICy4E4FUyk02rW4gxRM.m3u8"),
-        ("Unified Streaming", "https://demo.unified-streaming.com/k8s/live/stable/scte35.isml/.m3u8"),
-        ("NASA+ (VOD)", "https://nasaplus.akamaized.net/output/16899.m3u8"),
-    ]
-
     private var emptyBrowserPlaceholder: some View {
         VStack(spacing: 12) {
             Image(systemName: "play.rectangle.on.rectangle")
@@ -106,10 +95,29 @@ struct ContentView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
 
+            if let saved = browser.savedURL {
+                Button {
+                    browser.loadStream(saved)
+                } label: {
+                    Label {
+                        Text(saved)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    } icon: {
+                        Image(systemName: "bookmark.fill")
+                    }
+                    .font(.subheadline)
+                }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
+                .padding(.top, 12)
+                .frame(maxWidth: 320)
+            }
+
             Text("Or try a test stream")
                 .font(.footnote)
                 .foregroundStyle(.tertiary)
-                .padding(.top, 12)
+                .padding(.top, browser.savedURL == nil ? 12 : 2)
 
             ViewThatFits {
                 HStack(spacing: 10) { suggestedStreamButtons }
@@ -119,10 +127,9 @@ struct ContentView: View {
     }
 
     private var suggestedStreamButtons: some View {
-        ForEach(Self.suggestedStreams, id: \.url) { stream in
+        ForEach(BrowserViewModel.suggestedStreams, id: \.url) { stream in
             Button {
-                browser.urlText = stream.url
-                browser.submitURL()
+                browser.loadStream(stream.url)
             } label: {
                 Label(stream.name, systemImage: "dot.radiowaves.left.and.right")
                     .font(.subheadline)
@@ -246,15 +253,26 @@ struct ContentView: View {
                 Toggle(isOn: $browser.rememberURL) {
                     Label("Remember URL", systemImage: "bookmark")
                 }
-                if browser.savedURL != nil {
+                if let saved = browser.savedURL {
                     Section("Saved stream") {
-                        if let saved = browser.savedURL {
-                            Text(saved)
+                        Button {
+                            browser.loadStream(saved)
+                        } label: {
+                            Label(saved, systemImage: "bookmark.fill")
                         }
                         Button(role: .destructive) {
                             browser.clearSavedURL()
                         } label: {
                             Label("Clear Saved URL", systemImage: "trash")
+                        }
+                    }
+                }
+                Section("Test streams") {
+                    ForEach(BrowserViewModel.suggestedStreams, id: \.url) { stream in
+                        Button {
+                            browser.loadStream(stream.url)
+                        } label: {
+                            Label(stream.name, systemImage: "dot.radiowaves.left.and.right")
                         }
                     }
                 }

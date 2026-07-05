@@ -10,6 +10,14 @@ import Combine
 @MainActor
 final class BrowserViewModel: NSObject, ObservableObject {
 
+    /// Known-good HLS streams offered on the launch screen and in the
+    /// bookmark menu, verified down to segment delivery.
+    static let suggestedStreams: [(name: String, url: String)] = [
+        ("Mux Live Test", "https://stream.mux.com/v69RSHhFelSm4701snP22dYz2jICy4E4FUyk02rW4gxRM.m3u8"),
+        ("Unified Streaming", "https://demo.unified-streaming.com/k8s/live/stable/scte35.isml/.m3u8"),
+        ("NASA+ (VOD)", "https://nasaplus.akamaized.net/output/16899.m3u8"),
+    ]
+
     @Published var urlText: String = ""
     @Published private(set) var isLoading = false
     @Published private(set) var progress: Double = 0
@@ -104,23 +112,18 @@ final class BrowserViewModel: NSObject, ObservableObject {
             }
         ]
 
-        // Pre-fill the address bar with the remembered URL, but DON'T load it
-        // here. The actual load is triggered from ContentView.onAppear via
-        // loadRememberedStreamIfNeeded() once the SwiftUI hierarchy is mounted
-        // and the web view has a real hosting window. Kicking off a WKWebView
-        // load during view-model construction (no window yet) could leave the
-        // web view as an opaque black surface covering the UI.
+        // Pre-fill the address bar with the remembered URL but don't load it:
+        // the launch screen offers the saved stream and the test streams as
+        // choices instead of auto-opening anything.
         if rememberURL, let saved = savedURL, !saved.isEmpty {
             urlText = saved
         }
     }
 
-    /// Loads the remembered stream (if any) once the UI is on screen. Safe to
-    /// call multiple times; it only loads when nothing has been loaded yet.
-    func loadRememberedStreamIfNeeded() {
-        guard !hasContent, rememberURL, let saved = savedURL, !saved.isEmpty else { return }
-        urlText = saved
-        load(urlString: saved)
+    /// Loads a stream picked from the launch screen or the bookmark menu.
+    func loadStream(_ urlString: String) {
+        urlText = urlString
+        load(urlString: urlString)
     }
 
     func submitURL() {
