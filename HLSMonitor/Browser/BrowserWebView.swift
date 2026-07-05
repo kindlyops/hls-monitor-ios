@@ -212,6 +212,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let html = """
         <!DOCTYPE html><html><head>
         <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="referrer" content="no-referrer">
         <style>body{margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh}
         video{width:100%;max-height:100vh}</style>
         <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.min.js"></script>
@@ -221,24 +222,43 @@ final class BrowserViewModel: NSObject, ObservableObject {
         (function() {
             var video = document.getElementById('player');
             var src = "\(url.absoluteString)";
-            function playNatively() { video.src = src; }
+            function playNatively() {
+                video.src = src;
+                // The autoplay attribute doesn't re-trigger after a failed
+                // MSE attach; start playback explicitly.
+                var p = video.play();
+                if (p && typeof p.catch === 'function') { p.catch(function() {}); }
+            }
             if (window.Hls && Hls.isSupported()) {
                 var hls = new Hls({ liveDurationInfinity: true });
+                var fellBack = false;
+                var mediaRecoveries = 0;
+                var networkRestarts = 0;
+                function fallBackToNative() {
+                    if (fellBack) { return; }
+                    fellBack = true;
+                    try { hls.destroy(); } catch (e) {}
+                    playNatively();
+                }
                 hls.on(Hls.Events.ERROR, function(_, data) {
                     if (!data.fatal) { return; }
-                    if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                    // Bounded recovery: a stream hls.js can't actually play
+                    // (e.g. unsupported transmux output) throws the same
+                    // fatal error repeatedly — cap attempts, then let the
+                    // native engine try instead of looping forever.
+                    if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRecoveries < 2) {
+                        mediaRecoveries++;
                         hls.recoverMediaError();
                         return;
                     }
                     if (data.type === Hls.ErrorTypes.NETWORK_ERROR &&
-                        data.details !== Hls.ErrorDetails.MANIFEST_LOAD_ERROR) {
+                        data.details !== Hls.ErrorDetails.MANIFEST_LOAD_ERROR &&
+                        networkRestarts < 3) {
+                        networkRestarts++;
                         hls.startLoad();
                         return;
                     }
-                    // Manifest unreadable from JS (e.g. no CORS) or an
-                    // unrecoverable error: let the native engine try.
-                    hls.destroy();
-                    playNatively();
+                    fallBackToNative();
                 });
                 // Feed remuxed audio segments to the injected loudness meter:
                 // WebKit gives the page no PCM access to <video> audio, so
