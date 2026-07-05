@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import CoreMedia
 import Testing
 @testable import HLSMonitor
 
@@ -87,6 +88,94 @@ struct LoudnessMeterTests {
         )
         let integrated = meter.levels.integrated
         #expect(integrated != nil && abs(integrated! - -23.01) < 1.0)
+    }
+
+    // MARK: - CMSampleBuffer ingestion
+
+    /// Builds an interleaved-stereo Int16 PCM sample buffer like the ones
+    /// ReplayKit capture delivers.
+    private func int16SampleBuffer(
+        tone: [Float], rate: Double, bigEndian: Bool
+    ) -> CMSampleBuffer {
+        var samples = [Int16]()
+        samples.reserveCapacity(tone.count * 2)
+        for value in tone {
+            let scaled = Int16(max(-32768, min(32767, (value * 32767).rounded())))
+            let stored = bigEndian ? scaled.bigEndian : scaled
+            samples.append(stored)
+            samples.append(stored)
+        }
+        var asbd = AudioStreamBasicDescription(
+            mSampleRate: rate,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked
+                | (bigEndian ? kAudioFormatFlagIsBigEndian : 0),
+            mBytesPerPacket: 4,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 4,
+            mChannelsPerFrame: 2,
+            mBitsPerChannel: 16,
+            mReserved: 0
+        )
+        var formatDescription: CMAudioFormatDescription?
+        #expect(CMAudioFormatDescriptionCreate(
+            allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil,
+            magicCookieSize: 0, magicCookie: nil, extensions: nil,
+            formatDescriptionOut: &formatDescription
+        ) == noErr)
+
+        let byteCount = samples.count * MemoryLayout<Int16>.size
+        var blockBuffer: CMBlockBuffer?
+        #expect(CMBlockBufferCreateWithMemoryBlock(
+            allocator: nil, memoryBlock: nil, blockLength: byteCount,
+            blockAllocator: nil, customBlockSource: nil, offsetToData: 0,
+            dataLength: byteCount, flags: 0, blockBufferOut: &blockBuffer
+        ) == noErr)
+        samples.withUnsafeBytes { raw in
+            #expect(CMBlockBufferReplaceDataBytes(
+                with: raw.baseAddress!, blockBuffer: blockBuffer!,
+                offsetIntoDestination: 0, dataLength: byteCount
+            ) == noErr)
+        }
+
+        var sampleBuffer: CMSampleBuffer?
+        #expect(CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+            allocator: nil, dataBuffer: blockBuffer!,
+            formatDescription: formatDescription!, sampleCount: tone.count,
+            presentationTimeStamp: .zero, packetDescriptions: nil,
+            sampleBufferOut: &sampleBuffer
+        ) == noErr)
+        return sampleBuffer!
+    }
+
+    @Test func bigEndianInt16SampleBufferMetersCorrectly() {
+        // ReplayKit broadcast capture delivers big-endian Int16 PCM — the
+        // format that read as silence/garbage before AVAudioConverter
+        // ingestion. Same-signal-both-channels must read -20 LUFS.
+        let meter = LoudnessMeter()
+        let tone = sine(frequency: 997, amplitude: 0.1, seconds: 1, rate: 44_100)
+        for chunk in stride(from: 0, to: tone.count, by: 22_050) {
+            let end = min(chunk + 22_050, tone.count)
+            let buffer = int16SampleBuffer(
+                tone: Array(tone[chunk..<end]), rate: 44_100, bigEndian: true
+            )
+            meter.process(sampleBuffer: buffer)
+        }
+        #expect(meter.buffersConsumed == meter.buffersReceived)
+        #expect(meter.buffersConsumed > 0)
+        let momentary = meter.levels.momentary
+        #expect(momentary != nil && abs(momentary! - -20.0) < 0.1)
+    }
+
+    @Test func nativeEndianInt16SampleBufferMatchesBigEndian() {
+        let tone = sine(frequency: 997, amplitude: 0.1, seconds: 1, rate: 44_100)
+        let bigMeter = LoudnessMeter()
+        bigMeter.process(sampleBuffer: int16SampleBuffer(tone: tone, rate: 44_100, bigEndian: true))
+        let littleMeter = LoudnessMeter()
+        littleMeter.process(sampleBuffer: int16SampleBuffer(tone: tone, rate: 44_100, bigEndian: false))
+        let a = bigMeter.levels.momentary
+        let b = littleMeter.levels.momentary
+        #expect(a != nil && b != nil && abs(a! - b!) < 0.01)
     }
 
     @Test func buffersSplitAcrossCallsMatchOneCall() {
