@@ -503,8 +503,12 @@ private struct LiveStatsView: View {
             }
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                 StatCell(title: "Resolution", value: stats.resolutionText)
-                StatCell(title: "Buffer", value: String(format: "%.1fs", stats.bufferedSeconds),
-                         color: stats.bufferedSeconds < 2 && monitor.playback != nil ? .orange : .primary)
+                HStack(spacing: 6) {
+                    StatCell(title: "Buffer", value: String(format: "%.1fs", stats.bufferedSeconds),
+                             color: stats.bufferedSeconds < 2 && monitor.playback != nil ? .orange : .primary)
+                    BufferGauge(seconds: stats.bufferedSeconds)
+                        .frame(height: 30)
+                }
                 StatCell(title: "Position", value: timeString(stats.currentTime))
                 StatCell(title: "Dropped", value: "\(stats.droppedFrames)",
                          color: stats.droppedFrames > 0 ? .orange : .primary)
@@ -710,6 +714,38 @@ private struct EventRow: View {
 }
 
 // MARK: - Shared bits
+
+/// Vertical gauge of remaining playback buffer. Full at 30s or more, draining
+/// toward the bottom as the buffer shrinks; yellow under 10s, red when empty.
+private struct BufferGauge: View {
+    let seconds: Double
+
+    private static let fullScale: Double = 30
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .bottom) {
+                Capsule()
+                    .fill(Color(.systemGray5))
+                Capsule()
+                    .fill(color)
+                    .frame(height: max(geo.size.height * fill, 3))
+            }
+        }
+        .frame(width: 5)
+        .animation(.easeOut(duration: 0.3), value: seconds)
+    }
+
+    private var fill: CGFloat {
+        CGFloat(min(max(seconds, 0) / Self.fullScale, 1))
+    }
+
+    private var color: Color {
+        if seconds <= 0 { return .red }
+        if seconds < 10 { return .yellow }
+        return .green
+    }
+}
 
 private struct StatCell: View {
     let title: String
