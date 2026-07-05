@@ -103,7 +103,7 @@ struct LivePulseHeader: View {
             }
         }
         .padding(12)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        .background(Color("PanelBackground"), in: RoundedRectangle(cornerRadius: 16))
         .animation(.snappy(duration: 0.3), value: monitor.segments.failureCount)
     }
 
@@ -182,7 +182,7 @@ struct PlaybackCard: View {
             }
         }
         .padding(12)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .background(Color("PanelBackground"), in: RoundedRectangle(cornerRadius: 14))
     }
 
     private func timeString(_ seconds: Double) -> String {
@@ -210,7 +210,7 @@ struct SegmentsCard: View {
             }
         }
         .padding(12)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .background(Color("PanelBackground"), in: RoundedRectangle(cornerRadius: 14))
     }
 }
 
@@ -279,7 +279,7 @@ struct DownloadChartCard: View {
             }
         }
         .padding(12)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .background(Color("PanelBackground"), in: RoundedRectangle(cornerRadius: 14))
     }
 }
 
@@ -387,7 +387,7 @@ struct LoudnessCard: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .background(Color("PanelBackground"), in: RoundedRectangle(cornerRadius: 14))
     }
 
     private var meterDeviceAudioButton: some View {
@@ -448,7 +448,7 @@ private struct LoudnessMeterBar: View {
                 // EBU R128 programme target.
                 let targetX = geo.size.width * fraction(of: -23)
                 Rectangle()
-                    .fill(Color(.secondarySystemGroupedBackground))
+                    .fill(Color("PanelBackground"))
                     .frame(width: 1.5, height: geo.size.height)
                     .position(x: targetX, y: geo.size.height / 2)
                 Text("-23")
@@ -498,7 +498,7 @@ struct BufferGauge: View {
                 ForEach([10, 20], id: \.self) { mark in
                     let y = geo.size.height * (1 - CGFloat(mark) / CGFloat(Self.fullScale))
                     Rectangle()
-                        .fill(Color(.secondarySystemGroupedBackground))
+                        .fill(Color("PanelBackground"))
                         .frame(width: geo.size.width, height: 1.5)
                         .position(x: geo.size.width / 2, y: y)
                     Text("\(mark)s")
@@ -835,7 +835,7 @@ struct StatCard: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+        .background(Color("PanelBackground"), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 

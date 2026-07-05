@@ -40,6 +40,8 @@ struct QualityReportSheet: View {
             }
             .navigationTitle("Quality Report")
             .navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden)
+            .background(Color("PaperBackground"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }

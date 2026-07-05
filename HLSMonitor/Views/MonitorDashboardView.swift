@@ -34,7 +34,7 @@ struct MonitorDashboardView: View {
             }
             .padding()
         }
-        .background(Color(.systemGroupedBackground))
+        .background(Color("PaperBackground"))
     }
 
     @ViewBuilder
@@ -80,7 +80,7 @@ private struct StreamsCard: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .background(Color("PanelBackground"), in: RoundedRectangle(cornerRadius: 14))
     }
 }
 
@@ -109,6 +109,6 @@ private struct EventsCard: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .background(Color("PanelBackground"), in: RoundedRectangle(cornerRadius: 14))
     }
 }

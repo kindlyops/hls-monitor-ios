@@ -33,7 +33,7 @@ struct ContentView: View {
             // Guaranteed-visible backdrop. Because this is a plain, unconditional
             // full-screen view, the window can never come up as a bare black
             // rectangle even during the very first layout pass.
-            Color(.systemGroupedBackground)
+            Color("PaperBackground")
                 .ignoresSafeArea()
 
             Group {
@@ -81,7 +81,7 @@ struct ContentView: View {
             ZStack {
                 // A neutral backdrop so an empty web view never shows as a bare
                 // black rectangle on first launch (before any URL is loaded).
-                Color(.secondarySystemBackground)
+                Color("PanelBackground")
 
                 if browser.hasContent {
                     BrowserWebView(webView: browser.webView)
@@ -255,7 +255,7 @@ struct ContentView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background(Color(.secondarySystemBackground), in: Capsule())
+            .background(Color("PanelBackground"), in: Capsule())
 
             Button(action: browser.reload) {
                 Image(systemName: "arrow.clockwise")

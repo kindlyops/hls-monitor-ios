@@ -63,7 +63,7 @@ struct MonitorPanelView: View {
             // Custom pill page indicator with labels.
             PageIndicatorBar(selectedCard: $selectedCard)
         }
-        .background(Color(.systemGroupedBackground))
+        .background(Color("PaperBackground"))
     }
 }
 
@@ -92,7 +92,7 @@ private struct PageIndicatorBar: View {
                 .padding(.horizontal, isSelected ? 10 : 8)
                 .padding(.vertical, 6)
                 .background(
-                    Capsule().fill(isSelected ? Color.accentColor.opacity(0.18) : Color(.secondarySystemGroupedBackground))
+                    Capsule().fill(isSelected ? Color.accentColor.opacity(0.18) : Color("PanelBackground"))
                 )
                 .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
                 .contentShape(Capsule())
