@@ -99,6 +99,25 @@ final class BrowserViewModel: NSObject, ObservableObject {
     func goBack() { webView.goBack() }
     func goForward() { webView.goForward() }
 
+    /// Kicks the web view's media pipeline back to life after the app returns
+    /// from the background (e.g. the phone was locked while a stream played).
+    /// WebKit suspends media decoding while backgrounded and doesn't always
+    /// resume the `<video>` element automatically, leaving it stalled while
+    /// segments keep downloading. Re-running the recovery routine re-primes it.
+    func recoverPlaybackAfterForeground() {
+        // Retry a couple of times: on the first tick WebKit may still be
+        // resuming the media session, so an immediate nudge can be ignored.
+        let delays: [TimeInterval] = [0.2, 0.8, 1.6]
+        for delay in delays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak webView] in
+                webView?.evaluateJavaScript(
+                    "if (window.__hlsRecoverPlayback) { window.__hlsRecoverPlayback(); }",
+                    completionHandler: nil
+                )
+            }
+        }
+    }
+
     private func loadInlinePlayer(for url: URL) {
         let html = """
         <!DOCTYPE html><html><head>

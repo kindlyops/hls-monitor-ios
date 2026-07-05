@@ -12,6 +12,7 @@ struct ContentView: View {
     @StateObject private var browser: BrowserViewModel
     @FocusState private var urlFieldFocused: Bool
     @State private var isBrowserExpanded = false
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         let monitor = HLSMonitorViewModel()
@@ -34,6 +35,13 @@ struct ContentView: View {
             .animation(.easeInOut(duration: 0.3), value: isLandscape)
         }
         .ignoresSafeArea(.keyboard)
+        .onChange(of: scenePhase) { _, newPhase in
+            // Returning to the foreground (e.g. after the phone was unlocked)
+            // can leave the web view's video stalled. Re-prime playback.
+            if newPhase == .active {
+                browser.recoverPlaybackAfterForeground()
+            }
+        }
     }
 
     private var browserSection: some View {

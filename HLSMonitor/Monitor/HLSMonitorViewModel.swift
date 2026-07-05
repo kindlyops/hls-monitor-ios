@@ -196,6 +196,8 @@ final class HLSMonitorViewModel: ObservableObject {
             log(.quality, "Rendition changed", detail: detail)
         case "error":
             log(.error, "Player error", detail: detail)
+        case "recovered":
+            log(.playback, "Playback recovered", detail: detail.isEmpty ? "resumed after foreground" : detail)
         case "waiting", "stalled":
             log(.error, "Buffering (\(name))")
         case "play", "pause", "ended", "loadedmetadata":

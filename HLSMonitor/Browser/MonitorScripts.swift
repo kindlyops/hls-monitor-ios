@@ -189,6 +189,57 @@ enum MonitorScripts {
             return origSend.apply(this, arguments);
         };
 
+        // ---- playback recovery after backgrounding ----
+        // When the app is backgrounded (phone locked), WebKit suspends the media
+        // decode pipeline. On return to the foreground the <video> element can be
+        // left stalled — the network layer keeps fetching segments but no frames
+        // are decoded/rendered, and a plain play() won't restart the decoder.
+        // Nudging currentTime forces the media engine to rebuild its pipeline.
+        function recoverPlayback() {
+            document.querySelectorAll('video').forEach(function(video) {
+                try {
+                    // Only resume streams that were meant to be playing.
+                    var wasPlaying = !video.paused && !video.ended;
+                    var live = !isFinite(video.duration) || video.duration === 0;
+
+                    // A tiny seek kicks the decoder back to life. For live streams,
+                    // jump to the live edge of the buffered range so we don't sit
+                    // on a stale position that may already have been evicted.
+                    if (video.buffered && video.buffered.length > 0) {
+                        var end = video.buffered.end(video.buffered.length - 1);
+                        var start = video.buffered.start(0);
+                        var target = video.currentTime;
+                        if (live) {
+                            target = Math.max(start, end - 0.5);
+                        } else {
+                            target = Math.min(end - 0.05, Math.max(start, video.currentTime + 0.01));
+                        }
+                        if (isFinite(target) && Math.abs(target - video.currentTime) > 0.001) {
+                            video.currentTime = target;
+                        }
+                    }
+
+                    if (wasPlaying) {
+                        var p = video.play();
+                        if (p && typeof p.catch === 'function') { p.catch(function() {}); }
+                    }
+                    post({ type: 'event', name: 'recovered', detail: live ? 'live' : 'vod' });
+                } catch (e) {
+                    post({ type: 'event', name: 'error', detail: 'recovery failed' });
+                }
+            });
+        }
+        // Exposed so the native layer can trigger recovery on scene activation.
+        window.__hlsRecoverPlayback = recoverPlayback;
+
+        // Also self-heal when the page regains visibility.
+        document.addEventListener('visibilitychange', function() {
+            if (!document.hidden) {
+                // Small delay lets WebKit finish resuming the media session first.
+                setTimeout(recoverPlayback, 300);
+            }
+        });
+
         // ---- video element observation ----
         var watchedVideos = new WeakSet();
 
