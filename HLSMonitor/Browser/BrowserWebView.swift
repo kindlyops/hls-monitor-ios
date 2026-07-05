@@ -199,13 +199,51 @@ final class BrowserViewModel: NSObject, ObservableObject {
         }
     }
 
+    /// Wraps a raw .m3u8 URL in a minimal player page. hls.js drives playback
+    /// when Media Source Extensions are available: it reliably refreshes live
+    /// playlists (the built-in WKWebView HLS engine can stall at the end of the
+    /// initial window) and issues manifest/segment requests through fetch/XHR,
+    /// which the injected monitor script intercepts directly. Falls back to the
+    /// native engine when hls.js can't load or can't play the stream.
     private func loadInlinePlayer(for url: URL) {
         let html = """
         <!DOCTYPE html><html><head>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>body{margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh}
-        video{width:100%;max-height:100vh}</style></head>
-        <body><video src="\(url.absoluteString)" controls autoplay playsinline></video></body></html>
+        video{width:100%;max-height:100vh}</style>
+        <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.min.js"></script>
+        </head>
+        <body><video id="player" controls autoplay playsinline></video>
+        <script>
+        (function() {
+            var video = document.getElementById('player');
+            var src = "\(url.absoluteString)";
+            function playNatively() { video.src = src; }
+            if (window.Hls && Hls.isSupported()) {
+                var hls = new Hls({ liveDurationInfinity: true });
+                hls.on(Hls.Events.ERROR, function(_, data) {
+                    if (!data.fatal) { return; }
+                    if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                        hls.recoverMediaError();
+                        return;
+                    }
+                    if (data.type === Hls.ErrorTypes.NETWORK_ERROR &&
+                        data.details !== Hls.ErrorDetails.MANIFEST_LOAD_ERROR) {
+                        hls.startLoad();
+                        return;
+                    }
+                    // Manifest unreadable from JS (e.g. no CORS) or an
+                    // unrecoverable error: let the native engine try.
+                    hls.destroy();
+                    playNatively();
+                });
+                hls.loadSource(src);
+                hls.attachMedia(video);
+            } else {
+                playNatively();
+            }
+        })();
+        </script></body></html>
         """
         webView.loadHTMLString(html, baseURL: url)
     }
