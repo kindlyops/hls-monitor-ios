@@ -739,12 +739,19 @@ private struct BufferGauge: View {
                     .fill(color)
                     .frame(height: max(geo.size.height * fill, 3))
                 // Notches marking the 10s and 20s levels, drawn in the card's
-                // background color so they read as subtle gaps in the bar.
-                ForEach([10.0, 20.0], id: \.self) { mark in
+                // background color so they read as subtle gaps in the bar,
+                // with tiny labels floating just left of the bar.
+                ForEach([10, 20], id: \.self) { mark in
+                    let y = geo.size.height * (1 - CGFloat(mark) / CGFloat(Self.fullScale))
                     Rectangle()
                         .fill(Color(.secondarySystemGroupedBackground))
-                        .frame(height: 1.5)
-                        .offset(y: -geo.size.height * CGFloat(mark / Self.fullScale))
+                        .frame(width: geo.size.width, height: 1.5)
+                        .position(x: geo.size.width / 2, y: y)
+                    Text("\(mark)s")
+                        .font(.system(size: 7, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize()
+                        .position(x: -8, y: y)
                 }
             }
         }
