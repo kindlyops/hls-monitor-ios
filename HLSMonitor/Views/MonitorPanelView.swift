@@ -110,24 +110,55 @@ private struct PageIndicatorBar: View {
 /// Compact always-visible strip: pulses on each new segment and counts time since last download.
 private struct LivePulseHeader: View {
     @ObservedObject var monitor: HLSMonitorViewModel
-    @State private var pulse = false
-    @State private var now = Date()
 
-    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    /// One ripple cycle per downloaded segment: invisible at rest, appears
+    /// snugly around the dot, then expands outward while fading away.
+    private enum PulsePhase: CaseIterable {
+        case idle
+        case primed
+        case ripple
+    }
 
     var body: some View {
+        // TimelineView redraws each second with the current date. A Timer
+        // publisher stored on this struct would be recreated (and its countdown
+        // reset) every time the monitor publishes, so it would never fire.
+        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            header(now: timeline.date)
+        }
+    }
+
+    private func header(now: Date) -> some View {
         HStack(spacing: 12) {
-            // Pulsing activity dot.
+            // Activity dot that pulses once per downloaded segment.
             ZStack {
                 Circle()
-                    .fill(pulseColor.opacity(0.25))
+                    .fill(pulseColor(now: now).opacity(0.25))
                     .frame(width: 26, height: 26)
-                    .scaleEffect(pulse ? 1.5 : 0.8)
-                    .opacity(pulse ? 0 : 0.9)
+                    .phaseAnimator(PulsePhase.allCases, trigger: monitor.segments.count) { ring, phase in
+                        ring
+                            .scaleEffect(phase == .ripple ? 1.5 : 0.6)
+                            .opacity(phase == .primed ? 0.9 : 0)
+                    } animation: { phase in
+                        switch phase {
+                        case .primed: .easeOut(duration: 0.12)
+                        case .ripple: .easeOut(duration: 0.5)
+                        case .idle: .linear(duration: 0.05)
+                        }
+                    }
                 Circle()
-                    .fill(pulseColor)
+                    .fill(pulseColor(now: now))
                     .frame(width: 11, height: 11)
-                    .shadow(color: pulseColor.opacity(0.6), radius: pulse ? 6 : 2)
+                    .shadow(color: pulseColor(now: now).opacity(0.6), radius: 2)
+                    .phaseAnimator(PulsePhase.allCases, trigger: monitor.segments.count) { dot, phase in
+                        dot.scaleEffect(phase == .primed ? 1.25 : 1.0)
+                    } animation: { phase in
+                        switch phase {
+                        case .primed: .easeOut(duration: 0.12)
+                        case .ripple: .easeOut(duration: 0.5)
+                        case .idle: .easeOut(duration: 0.3)
+                        }
+                    }
             }
             .frame(width: 30, height: 30)
 
@@ -157,9 +188,9 @@ private struct LivePulseHeader: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 1) {
-                Text(lastSegmentAgo)
+                Text(lastSegmentAgo(now: now))
                     .font(.callout.weight(.bold).monospacedDigit())
-                    .foregroundStyle(agoColor)
+                    .foregroundStyle(agoColor(now: now))
                     .contentTransition(.numericText())
                 Text("since last")
                     .font(.caption2)
@@ -168,38 +199,25 @@ private struct LivePulseHeader: View {
         }
         .padding(12)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
-        .onReceive(ticker) { now = max($0, now) }
-        .onAppear { now = Date() }
         .animation(.snappy(duration: 0.3), value: monitor.segments.failureCount)
-        .onChange(of: monitor.segments.count) {
-            // Refresh the clock the moment a new segment lands. The 1s ticker can
-            // be stale (it pauses while backgrounded), which would otherwise make
-            // a freshly-dated segment appear "in the future" and produce negative
-            // seconds-since-last readings after the app returns to the foreground.
-            now = Date()
-            withAnimation(.easeOut(duration: 0.55)) { pulse = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
-                pulse = false
-            }
-        }
     }
 
-    /// Elapsed time since the last segment, never negative. Guards against a
-    /// stale `now` (e.g. the ticker not having fired yet) reporting the segment
-    /// as being in the future.
-    private var secondsSinceLastSegment: TimeInterval? {
+    /// Elapsed time since the last segment, never negative. A segment can be
+    /// stamped a moment after the current timeline tick, which would otherwise
+    /// read as being in the future.
+    private func secondsSinceLastSegment(now: Date) -> TimeInterval? {
         guard let date = monitor.segments.lastSegmentDate else { return nil }
         return max(0, now.timeIntervalSince(date))
     }
 
-    private var pulseColor: Color {
-        guard let gap = secondsSinceLastSegment else { return Color(.systemGray3) }
+    private func pulseColor(now: Date) -> Color {
+        guard let gap = secondsSinceLastSegment(now: now) else { return Color(.systemGray3) }
         if gap > 12 { return .orange }
         return .green
     }
 
-    private var agoColor: Color {
-        guard let gap = secondsSinceLastSegment else { return .secondary }
+    private func agoColor(now: Date) -> Color {
+        guard let gap = secondsSinceLastSegment(now: now) else { return .secondary }
         return gap > 12 ? .orange : .primary
     }
 
@@ -208,8 +226,8 @@ private struct LivePulseHeader: View {
         return "\(monitor.segments.count) segments"
     }
 
-    private var lastSegmentAgo: String {
-        guard let gap = secondsSinceLastSegment else { return "—" }
+    private func lastSegmentAgo(now: Date) -> String {
+        guard let gap = secondsSinceLastSegment(now: now) else { return "—" }
         let secs = Int(gap)
         if secs < 60 { return "\(secs)s" }
         return String(format: "%d:%02d", secs / 60, secs % 60)
