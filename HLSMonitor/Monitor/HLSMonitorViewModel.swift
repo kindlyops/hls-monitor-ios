@@ -17,6 +17,11 @@ final class HLSMonitorViewModel: ObservableObject {
     /// Rolling momentary-loudness history for the loudness sparkline
     /// (~30s at the 200ms reporting cadence).
     @Published private(set) var audioHistory: [Double] = []
+    /// True while ReplayKit is metering the device's own audio output —
+    /// the only route to audio WebKit plays through its native pipeline.
+    @Published private(set) var nativeMeteringActive = false
+
+    private let nativeTap = NativeAudioLoudnessTap()
 
     private var knownManifestURLs: Set<String> = []
     private var fetchingURLs: Set<String> = []
@@ -31,8 +36,11 @@ final class HLSMonitorViewModel: ObservableObject {
         streams.removeAll()
         playback = nil
         segments = SegmentTracker()
-        audio = nil
-        audioHistory.removeAll()
+        // Device-level metering survives page changes; page-level doesn't.
+        if !nativeMeteringActive {
+            audio = nil
+            audioHistory.removeAll()
+        }
         knownManifestURLs.removeAll()
         fetchingURLs.removeAll()
         recentBitrates.removeAll()
@@ -255,7 +263,44 @@ final class HLSMonitorViewModel: ObservableObject {
         playback = stats
     }
 
+    /// Starts metering the app's audio output via ReplayKit in-app capture.
+    /// iOS shows a consent prompt and a capture indicator; no data is
+    /// recorded, video frames are discarded, and the mic stays off.
+    func startNativeAudioMetering() {
+        guard !nativeMeteringActive else { return }
+        nativeTap.start(
+            onLevels: { [weak self] levels in
+                guard let self, self.nativeMeteringActive else { return }
+                self.audio = levels
+                self.appendAudioHistory(levels.momentary)
+            },
+            onStateChange: { [weak self] active, error in
+                guard let self else { return }
+                self.nativeMeteringActive = active
+                if let error {
+                    self.log(.error, "Device audio metering failed", detail: error)
+                } else if active {
+                    self.audio = AudioLoudness()
+                    self.audioHistory.removeAll()
+                    self.log(.info, "Device audio metering started",
+                             detail: "ReplayKit in-app capture, audio only")
+                }
+            }
+        )
+    }
+
+    func stopNativeAudioMetering() {
+        guard nativeMeteringActive else { return }
+        nativeTap.stop()
+        nativeMeteringActive = false
+        audio = nil
+        audioHistory.removeAll()
+        log(.info, "Device audio metering stopped")
+    }
+
     private func handleAudio(_ body: [String: Any]) {
+        // Device-level metering owns the loudness card while it runs.
+        guard !nativeMeteringActive else { return }
         guard (body["state"] as? String) != "unavailable" else {
             audio = AudioLoudness(unavailable: true)
             log(.info, "Loudness metering unavailable",
@@ -268,7 +313,11 @@ final class HLSMonitorViewModel: ObservableObject {
         levels.integrated = (body["integrated"] as? NSNumber)?.doubleValue
         levels.peakDbfs = (body["peak"] as? NSNumber)?.doubleValue
         audio = levels
-        audioHistory.append(levels.momentary ?? -70)
+        appendAudioHistory(levels.momentary)
+    }
+
+    private func appendAudioHistory(_ momentary: Double?) {
+        audioHistory.append(momentary ?? -70)
         if audioHistory.count > 150 {
             audioHistory.removeFirst(audioHistory.count - 150)
         }

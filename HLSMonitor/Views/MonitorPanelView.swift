@@ -165,19 +165,13 @@ private struct LoudnessView: View {
 
     var body: some View {
         ScrollView {
-            if monitor.audio == nil {
-                EmptyStateView(
-                    symbol: "speaker.wave.2",
-                    title: "No audio metered yet",
-                    message: "LUFS loudness will appear here once stream audio plays through the inline player."
-                )
-            } else {
-                VStack(spacing: 10) {
-                    LoudnessCard(monitor: monitor)
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 10)
+            // Always render the card: its empty state carries the button
+            // that starts device-audio metering for native players.
+            VStack(spacing: 10) {
+                LoudnessCard(monitor: monitor)
             }
+            .padding(.horizontal)
+            .padding(.vertical, 10)
         }
     }
 }

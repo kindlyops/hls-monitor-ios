@@ -344,9 +344,10 @@ struct LoudnessCard: View {
 
             if let audio = monitor.audio {
                 if audio.unavailable {
-                    Text("This player uses WebKit's built-in HLS pipeline, which keeps audio outside the page — loudness can only be metered for hls.js (MSE) playback.")
+                    Text("This player keeps audio in WebKit's native pipeline, out of the page's reach. Device audio metering can measure it instead.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    meterDeviceAudioButton
                 } else {
                     LoudnessMeterBar(momentary: audio.momentary, shortTerm: audio.shortTerm)
 
@@ -369,16 +370,47 @@ struct LoudnessCard: View {
                         }
                         .frame(height: 36)
                     }
+
+                    if monitor.nativeMeteringActive {
+                        HStack {
+                            Text("Metering the device's audio output")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Stop") {
+                                monitor.stopNativeAudioMetering()
+                            }
+                            .font(.caption2.weight(.semibold))
+                        }
+                    }
                 }
             } else {
-                Text("LUFS loudness will meter here once stream audio plays through the inline player.")
+                Text("LUFS loudness meters automatically when a raw .m3u8 plays in the inline player. For other players, meter the device's audio output instead.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                meterDeviceAudioButton
             }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var meterDeviceAudioButton: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                monitor.startNativeAudioMetering()
+            } label: {
+                Label("Meter Device Audio", systemImage: "waveform.badge.mic")
+                    .font(.subheadline)
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            Text("Uses iOS in-app screen capture (audio only). A consent prompt and capture indicator appear; nothing is recorded.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.top, 2)
     }
 
     private func lufsText(_ value: Double?) -> String {
