@@ -21,6 +21,7 @@ struct ContentView: View {
     }
 
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
         // Choose layout from the size class (available immediately — it never
@@ -35,7 +36,11 @@ struct ContentView: View {
                 .ignoresSafeArea()
 
             Group {
-                if verticalSizeClass == .compact {
+                if horizontalSizeClass == .regular {
+                    // iPad (and iPad Split View wide enough for a regular
+                    // width): dashboard layout with every monitor card visible.
+                    padLayout
+                } else if verticalSizeClass == .compact {
                     landscapeLayout
                 } else {
                     portraitLayout
@@ -94,6 +99,41 @@ struct ContentView: View {
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
+        }
+    }
+
+    private var padLayout: some View {
+        // The GeometryReader only picks which arrangement to use; children size
+        // themselves with flexible frames, so a transient zero size on the
+        // first pass cannot blank the screen.
+        GeometryReader { geo in
+            if geo.size.width > geo.size.height {
+                // Landscape: browser fills the left, dashboard column on the right.
+                HStack(spacing: 0) {
+                    browserSection
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    if !isBrowserExpanded {
+                        Divider()
+
+                        MonitorDashboardView(monitor: monitor)
+                            .frame(width: min(430, geo.size.width * 0.42))
+                    }
+                }
+            } else {
+                // Portrait: browser on top, two-column card grid below.
+                VStack(spacing: 0) {
+                    browserSection
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    if !isBrowserExpanded {
+                        Divider()
+
+                        MonitorDashboardView(monitor: monitor, columns: 2)
+                            .frame(height: geo.size.height * 0.5)
+                    }
+                }
+            }
         }
     }
 
