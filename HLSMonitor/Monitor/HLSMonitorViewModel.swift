@@ -27,6 +27,16 @@ final class HLSMonitorViewModel: ObservableObject {
     private var systemMeterTimer: Timer?
     private var loggedCaptureProblem = false
 
+    /// Accumulates the day's finished monitoring sessions for quality reports.
+    let sessionStore = SessionStore()
+    /// The URL being monitored, set by the browser when a page/stream loads.
+    var sessionStreamURL: String?
+    private var sessionStart: Date?
+    private var sessionDownloadTimes: [Double] = []
+    private var sessionStallCount = 0
+    private var sessionGapCount = 0
+    private var sessionQualitySwitchCount = 0
+
     private var knownManifestURLs: Set<String> = []
     private var fetchingURLs: Set<String> = []
     private var recentBitrates: [Double] = []
@@ -36,6 +46,7 @@ final class HLSMonitorViewModel: ObservableObject {
     // MARK: - Public
 
     func reset() {
+        finalizeSession()
         events.removeAll()
         streams.removeAll()
         playback = nil
@@ -49,7 +60,50 @@ final class HLSMonitorViewModel: ObservableObject {
         fetchingURLs.removeAll()
         recentBitrates.removeAll()
         lastQuality = ""
+        sessionStart = nil
+        sessionDownloadTimes.removeAll()
+        sessionStallCount = 0
+        sessionGapCount = 0
+        sessionQualitySwitchCount = 0
         log(.info, "Monitoring reset", detail: "New page loaded")
+    }
+
+    /// Builds a session from everything recorded since the last reset, or
+    /// nil when nothing was monitored.
+    func snapshotSession(endingAt end: Date = Date()) -> MonitoringSession? {
+        guard let start = sessionStart, segments.count > 0 else { return nil }
+        let mediaStream = streams.first { !$0.isMaster }
+        return MonitoringSession(
+            streamURL: sessionStreamURL ?? streams.first?.url.absoluteString ?? "unknown",
+            startDate: start,
+            endDate: end,
+            segmentCount: segments.count,
+            totalBytes: segments.totalBytes,
+            failureCount: segments.failureCount,
+            gapCount: sessionGapCount,
+            stallCount: sessionStallCount,
+            qualitySwitchCount: sessionQualitySwitchCount,
+            medianDownloadMs: MonitoringSession.percentile(sessionDownloadTimes, 0.5),
+            p95DownloadMs: MonitoringSession.percentile(sessionDownloadTimes, 0.95),
+            peakDownloadMs: sessionDownloadTimes.max(),
+            averageBitrateMbps: segments.averageBitrateMbps,
+            isLive: mediaStream?.isLive,
+            lastResolution: playback.flatMap { $0.width > 0 ? $0.resolutionText : nil }
+        )
+    }
+
+    /// Persists the in-progress session (if any) to the store. Called when a
+    /// new page loads and when the app is backgrounded.
+    func finalizeSession() {
+        guard let session = snapshotSession() else { return }
+        sessionStore.append(session)
+        sessionStart = nil
+        sessionDownloadTimes.removeAll()
+        sessionStallCount = 0
+        sessionGapCount = 0
+        sessionQualitySwitchCount = 0
+        log(.info, "Session saved",
+            detail: "\(session.segmentCount) segments · \(session.streamURL)")
     }
 
     /// Target segment duration of the most recently refreshed media playlist,
@@ -163,10 +217,12 @@ final class HLSMonitorViewModel: ObservableObject {
         // A long silence between downloads is a stall the per-sample chart
         // can't show on its own — mark it so it doesn't pass unnoticed.
         let now = Date()
+        if sessionStart == nil { sessionStart = now }
         if let previous = segments.lastSegmentDate {
             let gap = now.timeIntervalSince(previous)
             let gapThreshold = max(2 * (mediaTargetDuration ?? 6), 8)
             if gap > gapThreshold {
+                sessionGapCount += 1
                 appendEventMarker(.downloadGap(gap))
                 log(.error, "Download gap", detail: String(format: "%.0f s without a segment", gap))
             }
@@ -175,6 +231,7 @@ final class HLSMonitorViewModel: ObservableObject {
 
         // Record a sample for the download-time graph (keep a rolling window).
         if durationMs > 0 {
+            sessionDownloadTimes.append(durationMs)
             segments.recentSamples.append(SegmentSample(downloadMs: durationMs, bytes: max(bytes, 0), date: now))
             if segments.recentSamples.count > 30 {
                 segments.recentSamples.removeFirst()
@@ -238,6 +295,7 @@ final class HLSMonitorViewModel: ObservableObject {
             guard detail != lastQuality else { return }
             // The first report is the starting rendition, not a switch.
             if !lastQuality.isEmpty {
+                sessionQualitySwitchCount += 1
                 appendEventMarker(.qualityChange(detail))
             }
             lastQuality = detail
@@ -247,6 +305,7 @@ final class HLSMonitorViewModel: ObservableObject {
         case "recovered":
             log(.playback, "Playback recovered", detail: detail.isEmpty ? "resumed after foreground" : detail)
         case "waiting", "stalled":
+            sessionStallCount += 1
             log(.error, "Buffering (\(name))")
         case "play", "pause", "ended", "loadedmetadata":
             log(.playback, name.capitalized, detail: detail)
