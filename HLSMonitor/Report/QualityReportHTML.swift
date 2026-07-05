@@ -16,9 +16,9 @@ enum QualityReportHTML {
 
     private static let teal = "#235a68"
     private static let eventColors: [QualityEvent.Kind: String] = [
-        .failure: "#a33d2f",
-        .gap: "#c2762c",
-        .stall: "#b3953d",
+        .stall: "#a33d2f",
+        .failure: "#c2762c",
+        .gap: "#b3953d",
         .qualitySwitch: "#235a68",
     ]
     private static let eventLabels: [QualityEvent.Kind: String] = [
@@ -27,8 +27,10 @@ enum QualityReportHTML {
         .stall: "Stall",
         .qualitySwitch: "Rendition switch",
     ]
-    /// Bucket order when picking a cluster's color: worst wins.
-    private static let severityOrder: [QualityEvent.Kind] = [.failure, .gap, .stall, .qualitySwitch]
+    /// Bucket order when picking a cluster's color: worst wins. Stalls are
+    /// the only viewer-visible incident, so they outrank delivery problems
+    /// the buffer may have absorbed.
+    private static let severityOrder: [QualityEvent.Kind] = [.stall, .failure, .gap, .qualitySwitch]
 
     static func page(for session: MonitoringSession, generatedAt: Date = Date()) -> String {
         let day = DateFormatter()
@@ -90,6 +92,7 @@ enum QualityReportHTML {
         .spark .track { width: 100%; height: 4px; background: #e5e5e5; }
         .spark .fill { height: 100%; background: \(teal); }
 
+        .impact { font-size: 10.5px; color: #333; }
         .timeline-caption { font-size: 8px; color: #999; margin-top: 3px; }
         .legend { display: flex; gap: 14px; margin-top: 5px; font-size: 7.5px; color: #555; }
         .legend i { display: inline-block; width: 7px; height: 7px; margin-right: 4px; }
@@ -115,6 +118,9 @@ enum QualityReportHTML {
           <div class="stat"><b>\(escape(session.lastResolution ?? "—"))</b><span>Resolution</span></div>
         </div>
 
+        <div class="label">Viewer impact</div>
+        <div class="impact">\(escape(health.impact))</div>
+
         <div class="label">Timeline — quality events over the monitored window</div>
         \(timelineSVG(for: session, timeFormatter: time))
         \(session.events.isEmpty
@@ -127,9 +133,13 @@ enum QualityReportHTML {
         <table>
           <tr><th>Incident</th><th>Count</th><th></th><th>Meaning</th></tr>
           \(incidentRow("Failed segment downloads", session.failureCount, incidentMax,
-                        "Requests that errored or returned HTTP ≥ 400"))
+                        session.failureCount > 0 && session.stallCount == 0
+                            ? "Errored or HTTP ≥ 400 — all recovered with no visible impact"
+                            : "Requests that errored or returned HTTP ≥ 400"))
           \(incidentRow("Download gaps", session.gapCount, incidentMax,
-                        "Silence over 2× target duration between segments"))
+                        session.gapCount > 0 && session.stallCount == 0
+                            ? "Silence between segments — absorbed by the buffer"
+                            : "Silence over 2× target duration between segments"))
           \(incidentRow("Playback stalls", session.stallCount, incidentMax,
                         "Player reported waiting or stalled"))
           \(incidentRow("Rendition switches", session.qualitySwitchCount, incidentMax,
@@ -231,16 +241,29 @@ enum QualityReportHTML {
         """
     }
 
+    /// Judged on viewer impact: stalls are visible interruptions, while
+    /// failures and gaps that never produced a stall were absorbed by the
+    /// buffer and recovered invisibly — close calls, not visible problems.
     private static func healthAssessment(
         _ s: MonitoringSession
-    ) -> (label: String, color: String) {
-        if s.failureCount >= 5 || s.gapCount >= 3 || s.stallCount >= 3 {
-            return ("POOR", eventColors[.failure]!)
+    ) -> (label: String, color: String, impact: String) {
+        let closeCalls = s.failureCount + s.gapCount
+        if s.stallCount >= 3 {
+            return ("POOR", eventColors[.stall]!,
+                    "\(s.stallCount) visible playback interruptions.")
         }
-        if s.failureCount + s.gapCount + s.stallCount > 0 {
-            return ("DEGRADED", eventColors[.gap]!)
+        if s.stallCount > 0 {
+            let interruptions = s.stallCount == 1
+                ? "1 visible playback interruption"
+                : "\(s.stallCount) visible playback interruptions"
+            return ("DEGRADED", eventColors[.failure]!, "\(interruptions).")
         }
-        return ("HEALTHY", teal)
+        if closeCalls > 0 {
+            let problems = closeCalls == 1 ? "1 delivery problem" : "\(closeCalls) delivery problems"
+            return ("HEALTHY", teal,
+                    "None visible — \(problems) recovered before the buffer depleted.")
+        }
+        return ("HEALTHY", teal, "None — no delivery problems observed.")
     }
 
     private static func displayName(for url: String) -> String {
