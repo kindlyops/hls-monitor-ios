@@ -240,6 +240,219 @@ enum MonitorScripts {
             }
         });
 
+        // ---- audio loudness (BS.1770-style K-weighted LUFS) ----
+        // WebKit renders <video> audio outside the page's audio graph
+        // (MediaElementAudioSourceNode yields silence for both MSE and native
+        // HLS playback), so loudness is measured from the stream content
+        // instead: the inline player forwards each remuxed audio segment
+        // here, and the PCM is decoded and K-weighted off the playback path.
+        var audioMeter = {
+            initSeg: null,
+            decodeCtx: null,
+            queue: [],
+            busy: false,
+            hopMS: [],      // 100ms hop mean squares (rolling 3s window)
+            blocks: [],     // 400ms momentary-block mean squares for gating
+            sumSq: 0,
+            samplesIntoHop: 0,
+            hopSamples: 0,
+            sampleRate: 0,
+            lastPeakDb: null,
+            gotData: false,
+            playingTicks: 0,
+            unavailableSent: false
+        };
+
+        function lufs(meanSquare) {
+            if (!(meanSquare > 0)) { return null; }
+            return -0.691 + 10 * Math.log10(meanSquare);
+        }
+
+        function meanTail(arr, count) {
+            if (arr.length < count) { return null; }
+            var sum = 0;
+            for (var i = arr.length - count; i < arr.length; i++) { sum += arr[i]; }
+            return sum / count;
+        }
+
+        // BS.1770 gating: drop blocks under the -70 LUFS absolute gate, then
+        // under a relative gate 10 LU below the mean of what remains.
+        function integratedLufs(blocks) {
+            var absGated = [];
+            for (var i = 0; i < blocks.length; i++) {
+                var l = lufs(blocks[i]);
+                if (l !== null && l > -70) { absGated.push(blocks[i]); }
+            }
+            if (!absGated.length) { return null; }
+            var mean = 0;
+            for (var j = 0; j < absGated.length; j++) { mean += absGated[j]; }
+            mean /= absGated.length;
+            var relThreshold = lufs(mean) - 10;
+            var sum = 0, n = 0;
+            for (var k = 0; k < absGated.length; k++) {
+                var lk = lufs(absGated[k]);
+                if (lk !== null && lk > relThreshold) { sum += absGated[k]; n++; }
+            }
+            return n ? lufs(sum / n) : null;
+        }
+
+        // Called by the inline player with the audio init segment.
+        window.__hlsMonitorAudioInit = function(bytes) {
+            audioMeter.initSeg = new Uint8Array(bytes);
+        };
+
+        // Called by the inline player with each remuxed audio media segment.
+        window.__hlsMonitorAudioChunk = function(bytes) {
+            audioMeter.queue.push(new Uint8Array(bytes));
+            // Never build a decode backlog; dropping old chunks only thins
+            // the measurement, it cannot corrupt it.
+            if (audioMeter.queue.length > 8) { audioMeter.queue.shift(); }
+            processAudioQueue();
+        };
+
+        function processAudioQueue() {
+            if (audioMeter.busy || !audioMeter.queue.length) { return; }
+            var AC = window.AudioContext || window.webkitAudioContext;
+            if (!AC) { return; }
+            if (!audioMeter.decodeCtx) { audioMeter.decodeCtx = new AC(); }
+            var chunk = audioMeter.queue.shift();
+            var init = audioMeter.initSeg;
+            var full = chunk;
+            if (init) {
+                full = new Uint8Array(init.length + chunk.length);
+                full.set(init, 0);
+                full.set(chunk, init.length);
+            }
+            audioMeter.busy = true;
+            audioMeter.decodeCtx.decodeAudioData(
+                full.buffer.slice(0),
+                function(buffer) {
+                    kWeighAndAccumulate(buffer);
+                },
+                function() {
+                    audioMeter.busy = false;
+                    processAudioQueue();
+                }
+            );
+        }
+
+        function kWeighAndAccumulate(buffer) {
+            // Unweighted sample peak straight off the decoded PCM.
+            var peak = 0;
+            for (var c = 0; c < buffer.numberOfChannels; c++) {
+                var d = buffer.getChannelData(c);
+                for (var i = 0; i < d.length; i++) {
+                    var a = Math.abs(d[i]);
+                    if (a > peak) { peak = a; }
+                }
+            }
+            audioMeter.lastPeakDb = peak > 0 ? 20 * Math.log10(peak) : null;
+
+            var Offline = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+            if (!Offline) {
+                audioMeter.busy = false;
+                return;
+            }
+            var off = new Offline(buffer.numberOfChannels, buffer.length, buffer.sampleRate);
+            var source = off.createBufferSource();
+            source.buffer = buffer;
+            // Approximate K-weighting: pre-emphasis shelf then RLB high-pass.
+            var shelf = off.createBiquadFilter();
+            shelf.type = 'highshelf';
+            shelf.frequency.value = 1681.97;
+            shelf.gain.value = 3.99984;
+            var rlb = off.createBiquadFilter();
+            rlb.type = 'highpass';
+            rlb.frequency.value = 38.13;
+            rlb.Q.value = 0.5;
+            source.connect(shelf);
+            shelf.connect(rlb);
+            rlb.connect(off.destination);
+            source.start();
+            off.startRendering().then(function(rendered) {
+                accumulateWeighted(rendered);
+                audioMeter.gotData = true;
+                postAudioLevels();
+                audioMeter.busy = false;
+                processAudioQueue();
+            }).catch(function() {
+                audioMeter.busy = false;
+                processAudioQueue();
+            });
+        }
+
+        function accumulateWeighted(rendered) {
+            if (audioMeter.sampleRate !== rendered.sampleRate) {
+                audioMeter.sampleRate = rendered.sampleRate;
+                audioMeter.hopSamples = Math.round(rendered.sampleRate / 10);
+                audioMeter.sumSq = 0;
+                audioMeter.samplesIntoHop = 0;
+            }
+            var channels = [];
+            for (var c = 0; c < rendered.numberOfChannels; c++) {
+                channels.push(rendered.getChannelData(c));
+            }
+            for (var i = 0; i < rendered.length; i++) {
+                var sq = 0;
+                for (var c2 = 0; c2 < channels.length; c2++) {
+                    var v = channels[c2][i];
+                    sq += v * v;
+                }
+                audioMeter.sumSq += sq;
+                audioMeter.samplesIntoHop++;
+                if (audioMeter.samplesIntoHop >= audioMeter.hopSamples) {
+                    audioMeter.hopMS.push(audioMeter.sumSq / audioMeter.hopSamples);
+                    if (audioMeter.hopMS.length > 30) { audioMeter.hopMS.shift(); }
+                    if (audioMeter.hopMS.length >= 4) {
+                        var block = 0;
+                        for (var h = audioMeter.hopMS.length - 4; h < audioMeter.hopMS.length; h++) {
+                            block += audioMeter.hopMS[h];
+                        }
+                        // Cap the gating history at one hour of blocks.
+                        if (audioMeter.blocks.length < 36000) {
+                            audioMeter.blocks.push(block / 4);
+                        }
+                    }
+                    audioMeter.sumSq = 0;
+                    audioMeter.samplesIntoHop = 0;
+                }
+            }
+        }
+
+        function postAudioLevels() {
+            post({
+                type: 'audio',
+                state: 'metering',
+                momentary: lufs(meanTail(audioMeter.hopMS, 4)),
+                shortTerm: lufs(meanTail(audioMeter.hopMS, 30)),
+                integrated: integratedLufs(audioMeter.blocks),
+                peak: audioMeter.lastPeakDb
+            });
+        }
+
+        function postAudioUnavailable() {
+            if (audioMeter.unavailableSent) { return; }
+            audioMeter.unavailableSent = true;
+            post({ type: 'audio', state: 'unavailable' });
+        }
+
+        // Watchdog: report metering as unavailable when audio can never
+        // arrive — native HLS playback, or a third-party MSE player that
+        // does not feed segments to this page's meter.
+        setInterval(function() {
+            if (audioMeter.gotData || audioMeter.unavailableSent) { return; }
+            var video = document.querySelector('video');
+            if (!video || video.paused || !video.currentSrc) { return; }
+            if (video.currentSrc.indexOf('blob:') !== 0) {
+                postAudioUnavailable();
+                return;
+            }
+            audioMeter.playingTicks++;
+            if (audioMeter.playingTicks >= 12) {
+                postAudioUnavailable();
+            }
+        }, 1000);
+
         // ---- video element observation ----
         var watchedVideos = new WeakSet();
 

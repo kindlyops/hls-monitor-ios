@@ -321,6 +321,126 @@ struct DownloadMetricsRow: View {
     }
 }
 
+// MARK: - Audio loudness card
+
+/// LUFS loudness meter for the playing stream: momentary bar with an EBU R128
+/// -23 LUFS reference tick, M / S / I / peak readouts, and a momentary history
+/// sparkline. Data comes from the injected Web Audio K-weighted tap.
+struct LoudnessCard: View {
+    @ObservedObject var monitor: HLSMonitorViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Audio Loudness", systemImage: "speaker.wave.2")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                if let momentary = monitor.audio?.momentary {
+                    Text(String(format: "%.1f LUFS", momentary))
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(.tint)
+                }
+            }
+
+            if let audio = monitor.audio {
+                if audio.unavailable {
+                    Text("This player uses WebKit's built-in HLS pipeline, which keeps audio outside the page — loudness can only be metered for hls.js (MSE) playback.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    LoudnessMeterBar(momentary: audio.momentary, shortTerm: audio.shortTerm)
+
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 8) {
+                        StatCell(title: "M", value: lufsText(audio.momentary))
+                        StatCell(title: "S", value: lufsText(audio.shortTerm))
+                        StatCell(title: "I", value: lufsText(audio.integrated))
+                        StatCell(title: "Peak", value: audio.peakDbfs.map { String(format: "%.1f dB", $0) } ?? "—")
+                    }
+
+                    if monitor.audioHistory.count >= 2 {
+                        GeometryReader { geo in
+                            // Reuse the download chart with LUFS shifted into a
+                            // positive 0...60 range (-60 LUFS at the baseline).
+                            LineChart(
+                                values: monitor.audioHistory.map { min(max($0 + 60, 0), 60) },
+                                peak: 60,
+                                size: geo.size
+                            )
+                        }
+                        .frame(height: 36)
+                    }
+                }
+            } else {
+                Text("LUFS loudness will meter here once stream audio plays through the inline player.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func lufsText(_ value: Double?) -> String {
+        value.map { String(format: "%.1f", $0) } ?? "−∞"
+    }
+}
+
+/// Horizontal momentary-loudness bar on a -40...0 LUFS scale with a
+/// short-term marker line and the EBU R128 -23 LUFS reference tick.
+private struct LoudnessMeterBar: View {
+    let momentary: Double?
+    let shortTerm: Double?
+
+    private static let floorLufs: Double = -40
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color(.systemGray5))
+                Capsule()
+                    .fill(fillColor)
+                    .frame(width: max(geo.size.width * fraction(of: momentary), 4))
+
+                // Short-term marker.
+                if let shortTerm {
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.55))
+                        .frame(width: 2, height: 14)
+                        .position(x: geo.size.width * fraction(of: shortTerm), y: geo.size.height / 2)
+                }
+
+                // EBU R128 programme target.
+                let targetX = geo.size.width * fraction(of: -23)
+                Rectangle()
+                    .fill(Color(.secondarySystemGroupedBackground))
+                    .frame(width: 1.5, height: geo.size.height)
+                    .position(x: targetX, y: geo.size.height / 2)
+                Text("-23")
+                    .font(.system(size: 7, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                    .position(x: targetX, y: -6)
+            }
+        }
+        .frame(height: 10)
+        .padding(.top, 8)
+        .animation(.easeOut(duration: 0.15), value: momentary)
+    }
+
+    private func fraction(of lufs: Double?) -> CGFloat {
+        guard let lufs else { return 0 }
+        return CGFloat(min(max((lufs - Self.floorLufs) / -Self.floorLufs, 0), 1))
+    }
+
+    private var fillColor: Color {
+        guard let momentary else { return .green }
+        if momentary > -9 { return .red }
+        if momentary > -14 { return .orange }
+        return .green
+    }
+}
+
 // MARK: - Buffer gauge
 
 /// Vertical gauge of remaining playback buffer. Full at 30s or more, draining

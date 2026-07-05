@@ -13,6 +13,10 @@ final class HLSMonitorViewModel: ObservableObject {
     @Published private(set) var streams: [HLSStream] = []
     @Published private(set) var playback: PlaybackStats?
     @Published private(set) var segments = SegmentTracker()
+    @Published private(set) var audio: AudioLoudness?
+    /// Rolling momentary-loudness history for the loudness sparkline
+    /// (~30s at the 200ms reporting cadence).
+    @Published private(set) var audioHistory: [Double] = []
 
     private var knownManifestURLs: Set<String> = []
     private var fetchingURLs: Set<String> = []
@@ -27,6 +31,8 @@ final class HLSMonitorViewModel: ObservableObject {
         streams.removeAll()
         playback = nil
         segments = SegmentTracker()
+        audio = nil
+        audioHistory.removeAll()
         knownManifestURLs.removeAll()
         fetchingURLs.removeAll()
         recentBitrates.removeAll()
@@ -64,6 +70,8 @@ final class HLSMonitorViewModel: ObservableObject {
             handlePlayerEvent(body)
         case "stats":
             handleStats(body)
+        case "audio":
+            handleAudio(body)
         default:
             break
         }
@@ -245,6 +253,25 @@ final class HLSMonitorViewModel: ObservableObject {
         stats.totalFrames = (body["totalFrames"] as? NSNumber)?.intValue ?? 0
         stats.paused = (body["paused"] as? NSNumber)?.boolValue ?? true
         playback = stats
+    }
+
+    private func handleAudio(_ body: [String: Any]) {
+        guard (body["state"] as? String) != "unavailable" else {
+            audio = AudioLoudness(unavailable: true)
+            log(.info, "Loudness metering unavailable",
+                detail: "Native HLS playback keeps audio outside the page")
+            return
+        }
+        var levels = AudioLoudness()
+        levels.momentary = (body["momentary"] as? NSNumber)?.doubleValue
+        levels.shortTerm = (body["shortTerm"] as? NSNumber)?.doubleValue
+        levels.integrated = (body["integrated"] as? NSNumber)?.doubleValue
+        levels.peakDbfs = (body["peak"] as? NSNumber)?.doubleValue
+        audio = levels
+        audioHistory.append(levels.momentary ?? -70)
+        if audioHistory.count > 150 {
+            audioHistory.removeFirst(audioHistory.count - 150)
+        }
     }
 
     // MARK: - Helpers

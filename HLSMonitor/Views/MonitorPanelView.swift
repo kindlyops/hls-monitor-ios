@@ -12,6 +12,7 @@ struct MonitorPanelView: View {
     fileprivate enum Card: Int, CaseIterable {
         case live
         case download
+        case loudness
         case streams
         case events
 
@@ -19,6 +20,7 @@ struct MonitorPanelView: View {
             switch self {
             case .live: return "Live"
             case .download: return "Download"
+            case .loudness: return "Loudness"
             case .streams: return "Streams"
             case .events: return "Events"
             }
@@ -28,6 +30,7 @@ struct MonitorPanelView: View {
             switch self {
             case .live: return "waveform.path.ecg"
             case .download: return "waveform.path.ecg.rectangle"
+            case .loudness: return "speaker.wave.2"
             case .streams: return "list.bullet.rectangle"
             case .events: return "text.line.first.and.arrowtriangle.forward"
             }
@@ -48,6 +51,8 @@ struct MonitorPanelView: View {
                     .tag(Card.live.rawValue)
                 DownloadGraphView(monitor: monitor)
                     .tag(Card.download.rawValue)
+                LoudnessView(monitor: monitor)
+                    .tag(Card.loudness.rawValue)
                 StreamsListView(monitor: monitor)
                     .tag(Card.streams.rawValue)
                 EventLogView(monitor: monitor)
@@ -145,6 +150,30 @@ private struct DownloadGraphView: View {
                 VStack(spacing: 10) {
                     DownloadChartCard(monitor: monitor)
                     DownloadMetricsRow(monitor: monitor)
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 10)
+            }
+        }
+    }
+}
+
+// MARK: - Loudness
+
+private struct LoudnessView: View {
+    @ObservedObject var monitor: HLSMonitorViewModel
+
+    var body: some View {
+        ScrollView {
+            if monitor.audio == nil {
+                EmptyStateView(
+                    symbol: "speaker.wave.2",
+                    title: "No audio metered yet",
+                    message: "LUFS loudness will appear here once stream audio plays through the inline player."
+                )
+            } else {
+                VStack(spacing: 10) {
+                    LoudnessCard(monitor: monitor)
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 10)
