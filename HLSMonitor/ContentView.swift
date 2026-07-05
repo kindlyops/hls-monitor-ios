@@ -86,6 +86,12 @@ struct ContentView: View {
         }
     }
 
+    private static let suggestedStreams: [(name: String, url: String)] = [
+        ("Mux Live Test", "https://stream.mux.com/v69RSHhFelSm4701snP22dYz2jICy4E4FUyk02rW4gxRM.m3u8"),
+        ("Unified Streaming", "https://demo.unified-streaming.com/k8s/live/stable/scte35.isml/.m3u8"),
+        ("NASA+ (VOD)", "https://nasaplus.akamaized.net/output/16899.m3u8"),
+    ]
+
     private var emptyBrowserPlaceholder: some View {
         VStack(spacing: 12) {
             Image(systemName: "play.rectangle.on.rectangle")
@@ -99,6 +105,30 @@ struct ContentView: View {
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
+
+            Text("Or try a test stream")
+                .font(.footnote)
+                .foregroundStyle(.tertiary)
+                .padding(.top, 12)
+
+            ViewThatFits {
+                HStack(spacing: 10) { suggestedStreamButtons }
+                VStack(spacing: 10) { suggestedStreamButtons }
+            }
+        }
+    }
+
+    private var suggestedStreamButtons: some View {
+        ForEach(Self.suggestedStreams, id: \.url) { stream in
+            Button {
+                browser.urlText = stream.url
+                browser.submitURL()
+            } label: {
+                Label(stream.name, systemImage: "dot.radiowaves.left.and.right")
+                    .font(.subheadline)
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
         }
     }
 
