@@ -104,11 +104,23 @@ final class BrowserViewModel: NSObject, ObservableObject {
             }
         ]
 
-        // Restore a previously remembered stream so it opens automatically.
+        // Pre-fill the address bar with the remembered URL, but DON'T load it
+        // here. The actual load is triggered from ContentView.onAppear via
+        // loadRememberedStreamIfNeeded() once the SwiftUI hierarchy is mounted
+        // and the web view has a real hosting window. Kicking off a WKWebView
+        // load during view-model construction (no window yet) could leave the
+        // web view as an opaque black surface covering the UI.
         if rememberURL, let saved = savedURL, !saved.isEmpty {
             urlText = saved
-            load(urlString: saved)
         }
+    }
+
+    /// Loads the remembered stream (if any) once the UI is on screen. Safe to
+    /// call multiple times; it only loads when nothing has been loaded yet.
+    func loadRememberedStreamIfNeeded() {
+        guard !hasContent, rememberURL, let saved = savedURL, !saved.isEmpty else { return }
+        urlText = saved
+        load(urlString: saved)
     }
 
     func submitURL() {

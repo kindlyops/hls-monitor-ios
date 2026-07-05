@@ -20,26 +20,35 @@ struct ContentView: View {
         _browser = StateObject(wrappedValue: BrowserViewModel(monitor: monitor))
     }
 
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     var body: some View {
-        // Orientation is derived from the actual layout size via GeometryReader.
-        // This is the reliable, self-filling approach: the reader always reports
-        // the real window size on the first pass, so the UI appears immediately
-        // on launch in whichever orientation the device is in.
-        GeometryReader { proxy in
-            let isLandscape = proxy.size.width > proxy.size.height
+        // Choose layout from the size class (available immediately — it never
+        // collapses to zero the way a top-level GeometryReader's size can on the
+        // first layout pass, which was leaving the window fully black on launch).
+        // A compact vertical size class means landscape on iPhone.
+        ZStack {
+            // Guaranteed-visible backdrop. Because this is a plain, unconditional
+            // full-screen view, the window can never come up as a bare black
+            // rectangle even during the very first layout pass.
+            Color(.systemGroupedBackground)
+                .ignoresSafeArea()
 
             Group {
-                if isLandscape {
+                if verticalSizeClass == .compact {
                     landscapeLayout
                 } else {
                     portraitLayout
                 }
             }
-            .frame(width: proxy.size.width, height: proxy.size.height)
             .animation(.easeInOut(duration: 0.25), value: isBrowserExpanded)
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .ignoresSafeArea(.keyboard)
+        .onAppear {
+            // Now that the hierarchy is mounted and the web view has a window,
+            // it's safe to auto-open a remembered stream.
+            browser.loadRememberedStreamIfNeeded()
+        }
         .onChange(of: scenePhase) { _, newPhase in
             // Returning to the foreground (e.g. after the phone was unlocked)
             // can leave the web view's video stalled. Re-prime playback.
