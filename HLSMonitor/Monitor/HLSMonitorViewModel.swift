@@ -17,11 +17,14 @@ final class HLSMonitorViewModel: ObservableObject {
     /// Rolling momentary-loudness history for the loudness sparkline
     /// (~30s at the 200ms reporting cadence).
     @Published private(set) var audioHistory: [Double] = []
-    /// True while ReplayKit is metering the device's own audio output —
+    /// True while the LoudnessBroadcast extension is metering device audio —
     /// the only route to audio WebKit plays through its native pipeline.
-    @Published private(set) var nativeMeteringActive = false
+    /// The extension writes levels to the shared app group; freshness of
+    /// those writes is the liveness signal.
+    @Published private(set) var systemMeteringActive = false
 
-    private let nativeTap = NativeAudioLoudnessTap()
+    private let sharedDefaults = UserDefaults(suiteName: SharedLoudness.appGroup)
+    private var systemMeterTimer: Timer?
 
     private var knownManifestURLs: Set<String> = []
     private var fetchingURLs: Set<String> = []
@@ -37,7 +40,7 @@ final class HLSMonitorViewModel: ObservableObject {
         playback = nil
         segments = SegmentTracker()
         // Device-level metering survives page changes; page-level doesn't.
-        if !nativeMeteringActive {
+        if !systemMeteringActive {
             audio = nil
             audioHistory.removeAll()
         }
@@ -263,44 +266,41 @@ final class HLSMonitorViewModel: ObservableObject {
         playback = stats
     }
 
-    /// Starts metering the app's audio output via ReplayKit in-app capture.
-    /// iOS shows a consent prompt and a capture indicator; no data is
-    /// recorded, video frames are discarded, and the mic stays off.
-    func startNativeAudioMetering() {
-        guard !nativeMeteringActive else { return }
-        nativeTap.start(
-            onLevels: { [weak self] levels in
-                guard let self, self.nativeMeteringActive else { return }
-                self.audio = levels
-                self.appendAudioHistory(levels.momentary)
-            },
-            onStateChange: { [weak self] active, error in
-                guard let self else { return }
-                self.nativeMeteringActive = active
-                if let error {
-                    self.log(.error, "Device audio metering failed", detail: error)
-                } else if active {
-                    self.audio = AudioLoudness()
-                    self.audioHistory.removeAll()
-                    self.log(.info, "Device audio metering started",
-                             detail: "ReplayKit in-app capture, audio only")
-                }
-            }
-        )
+    /// Polls the app group for levels written by the LoudnessBroadcast
+    /// extension. Called from ContentView.onAppear; safe to call repeatedly.
+    func startWatchingSystemLoudness() {
+        guard systemMeterTimer == nil else { return }
+        systemMeterTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.readSystemLoudness() }
+        }
     }
 
-    func stopNativeAudioMetering() {
-        guard nativeMeteringActive else { return }
-        nativeTap.stop()
-        nativeMeteringActive = false
-        audio = nil
-        audioHistory.removeAll()
-        log(.info, "Device audio metering stopped")
+    private func readSystemLoudness() {
+        let stored = sharedDefaults?.dictionary(forKey: SharedLoudness.levelsKey) as? [String: Double]
+        guard let stored,
+              let (levels, date) = SharedLoudness.decode(stored),
+              Date().timeIntervalSince(date) < 1.5 else {
+            if systemMeteringActive {
+                systemMeteringActive = false
+                audio = nil
+                audioHistory.removeAll()
+                log(.info, "Device audio metering stopped")
+            }
+            return
+        }
+        if !systemMeteringActive {
+            systemMeteringActive = true
+            audioHistory.removeAll()
+            log(.info, "Device audio metering started",
+                detail: "Broadcast capture, levels only — nothing recorded")
+        }
+        audio = levels
+        appendAudioHistory(levels.momentary)
     }
 
     private func handleAudio(_ body: [String: Any]) {
         // Device-level metering owns the loudness card while it runs.
-        guard !nativeMeteringActive else { return }
+        guard !systemMeteringActive else { return }
         guard (body["state"] as? String) != "unavailable" else {
             audio = AudioLoudness(unavailable: true)
             log(.info, "Loudness metering unavailable",
