@@ -18,6 +18,7 @@ struct MonitoringSessionTests {
         failures: Int = 0,
         gaps: Int = 0,
         stalls: Int = 0,
+        stallSeconds: Double? = nil,
         switches: Int = 0,
         median: Double? = 300,
         p95: Double? = 900,
@@ -32,6 +33,7 @@ struct MonitoringSessionTests {
             failureCount: failures,
             gapCount: gaps,
             stallCount: stalls,
+            stallSeconds: stallSeconds,
             qualitySwitchCount: switches,
             medianDownloadMs: median,
             p95DownloadMs: p95,
@@ -150,6 +152,43 @@ struct MonitoringSessionTests {
         // One visible interruption is DEGRADED.
         let interrupted = session(start: Date(), minutes: 10, stalls: 1)
         #expect(QualityReportHTML.page(for: interrupted).contains("DEGRADED"))
+    }
+
+    @Test func consolidationSumsStallDurations() {
+        let base = Date(timeIntervalSince1970: 7_000_000)
+        let first = session(start: base, minutes: 10, stalls: 1, stallSeconds: 2.5)
+        let second = session(start: base.addingTimeInterval(1_200), minutes: 10,
+                             stalls: 2, stallSeconds: 4.0)
+        let merged = MonitoringSession.consolidate([first, second])
+        #expect(merged?.stallCount == 3)
+        #expect(merged?.stallSeconds == 6.5)
+
+        // Legacy sessions without durations leave the merged field nil.
+        let legacyMerge = MonitoringSession.consolidate([
+            session(start: base, minutes: 10, stalls: 1),
+            session(start: base.addingTimeInterval(1_200), minutes: 10, stalls: 1),
+        ])
+        #expect(legacyMerge?.stallSeconds == nil)
+    }
+
+    @Test func reportShowsFrozenDurationWithStalls() {
+        // One confirmed stall: duration in parentheses.
+        let one = session(start: Date(), minutes: 10, stalls: 1, stallSeconds: 2.3)
+        let oneHTML = QualityReportHTML.page(for: one)
+        #expect(oneHTML.contains("DEGRADED"))
+        #expect(oneHTML.contains("1 visible playback interruption (2.3s of frozen video)."))
+        #expect(oneHTML.contains("Video confirmed frozen mid-play — 2.3s total"))
+
+        // Several stalls: total duration.
+        let many = session(start: Date(), minutes: 10, stalls: 4, stallSeconds: 12.5)
+        let manyHTML = QualityReportHTML.page(for: many)
+        #expect(manyHTML.contains("POOR"))
+        #expect(manyHTML.contains("4 visible playback interruptions totaling 12.5s of frozen video."))
+
+        // Sessions saved before durations existed keep the plain wording.
+        let legacy = session(start: Date(), minutes: 10, stalls: 1)
+        let legacyHTML = QualityReportHTML.page(for: legacy)
+        #expect(legacyHTML.contains("1 visible playback interruption."))
     }
 
     @Test func recoveredFailuresAreCloseCallsNotDegraded() {

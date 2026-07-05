@@ -39,6 +39,9 @@ struct MonitoringSession: Codable, Identifiable {
     var failureCount: Int
     var gapCount: Int
     var stallCount: Int
+    /// Total seconds of confirmed frozen video across the session's stalls.
+    /// Optional so sessions persisted before this field existed still decode.
+    var stallSeconds: Double?
     var qualitySwitchCount: Int
     var medianDownloadMs: Double?
     var p95DownloadMs: Double?
@@ -82,6 +85,8 @@ struct MonitoringSession: Codable, Identifiable {
         merged.failureCount = sessions.reduce(0) { $0 + $1.failureCount }
         merged.gapCount = sessions.reduce(0) { $0 + $1.gapCount }
         merged.stallCount = sessions.reduce(0) { $0 + $1.stallCount }
+        let stallDurations = sessions.compactMap(\.stallSeconds)
+        merged.stallSeconds = stallDurations.isEmpty ? nil : stallDurations.reduce(0, +)
         merged.qualitySwitchCount = sessions.reduce(0) { $0 + $1.qualitySwitchCount }
         merged.consolidatedCount = sessions.count
         merged.monitoredSeconds = monitoredSeconds
