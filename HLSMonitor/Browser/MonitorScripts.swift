@@ -37,7 +37,25 @@ enum MonitorScripts {
             try { return new URL(url, document.baseURI).href; } catch (e) { return url; }
         }
 
-        // ---- fetch interception ----
+        // Dedupe segments so the same load isn't counted by both the JS hooks
+        // (hls.js style players) and the PerformanceObserver (native HLS engine).
+        var seenSegments = Object.create(null);
+        function reportSegment(url, durationMs, bytes) {
+            var abs = absolute(url);
+            var now = performance.now();
+            var prev = seenSegments[abs];
+            // Ignore a duplicate report for the same URL within a short window.
+            if (prev && (now - prev) < 1500) { return; }
+            seenSegments[abs] = now;
+            post({
+                type: 'segment',
+                url: abs,
+                durationMs: durationMs,
+                bytes: bytes || 0
+            });
+        }
+
+        // ---- fetch interception (covers MSE players like hls.js) ----
         var origFetch = window.fetch;
         window.fetch = function(input, init) {
             var url = (typeof input === 'string') ? input : (input && input.url);
@@ -50,17 +68,63 @@ enum MonitorScripts {
                 var started = performance.now();
                 return origFetch.apply(this, arguments).then(function(response) {
                     var bytes = parseInt(response.headers.get('content-length') || '0', 10);
-                    post({
-                        type: 'segment',
-                        url: absolute(url),
-                        durationMs: performance.now() - started,
-                        bytes: bytes
-                    });
+                    reportSegment(url, performance.now() - started, bytes);
                     return response;
                 });
             }
             return origFetch.apply(this, arguments);
         };
+
+        // ---- PerformanceObserver (covers native HLS played by <video> directly) ----
+        // On iOS/WKWebView many players hand the .m3u8 straight to the media
+        // engine, which fetches .ts/.m4s segments internally — those never pass
+        // through fetch/XHR. Resource Timing reports every request the page makes.
+        function handleResourceEntry(entry) {
+            var url = entry.name;
+            var kind = classify(url);
+            if (kind === 'manifest') {
+                post({ type: 'manifestRequest', url: absolute(url) });
+                return;
+            }
+            if (kind === 'segment') {
+                var durationMs = entry.duration ||
+                    (entry.responseEnd - entry.startTime) || 0;
+                // transferSize includes headers; encodedBodySize is the payload.
+                var bytes = entry.encodedBodySize || entry.transferSize || 0;
+                reportSegment(url, durationMs, bytes);
+            }
+        }
+
+        try {
+            if (window.PerformanceObserver) {
+                var po = new PerformanceObserver(function(list) {
+                    list.getEntries().forEach(handleResourceEntry);
+                });
+                po.observe({ type: 'resource', buffered: true });
+            }
+        } catch (e) {}
+
+        // Fallback: some engines don't emit observable resource entries promptly,
+        // so also poll the resource timing buffer periodically as a safety net.
+        var lastResourceScan = 0;
+        function scanResourceTiming() {
+            try {
+                var entries = performance.getEntriesByType('resource');
+                for (var i = 0; i < entries.length; i++) {
+                    var e = entries[i];
+                    if (e.startTime <= lastResourceScan) { continue; }
+                    handleResourceEntry(e);
+                }
+                if (entries.length) {
+                    lastResourceScan = entries[entries.length - 1].startTime;
+                }
+                // Keep the buffer from growing unbounded on long streams.
+                if (entries.length > 200 && performance.clearResourceTimings) {
+                    performance.clearResourceTimings();
+                    lastResourceScan = 0;
+                }
+            } catch (e) {}
+        }
 
         // ---- XHR interception ----
         var origOpen = XMLHttpRequest.prototype.open;
@@ -84,12 +148,7 @@ enum MonitorScripts {
                             bytes = xhr.response.byteLength;
                         }
                     } catch (e) {}
-                    post({
-                        type: 'segment',
-                        url: absolute(xhr.__hlsUrl),
-                        durationMs: performance.now() - started,
-                        bytes: bytes
-                    });
+                    reportSegment(xhr.__hlsUrl, performance.now() - started, bytes);
                 });
             }
             return origSend.apply(this, arguments);
@@ -148,8 +207,9 @@ enum MonitorScripts {
         startObserving();
         document.addEventListener('DOMContentLoaded', scan);
 
-        // ---- periodic playback stats ----
+        // ---- periodic playback stats + resource-timing safety net ----
         setInterval(function() {
+            scanResourceTiming();
             var video = document.querySelector('video');
             if (!video) { return; }
             var buffered = 0;
