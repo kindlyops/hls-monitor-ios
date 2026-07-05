@@ -85,6 +85,21 @@ struct PlaybackStats {
     }
 }
 
+// MARK: - Audio Loudness
+
+/// K-weighted loudness measurements streamed from the page's Web Audio tap.
+/// Values are LUFS (peak is sample-peak dBFS); nil means silence / not yet
+/// enough audio for that window.
+struct AudioLoudness {
+    var momentary: Double?
+    var shortTerm: Double?
+    var integrated: Double?
+    var peakDbfs: Double?
+    /// True when the player uses WebKit's native HLS pipeline, whose audio
+    /// never reaches the page's audio graph and so cannot be metered.
+    var unavailable: Bool = false
+}
+
 // MARK: - Segment Tracking
 
 /// A single downloaded segment sample used for the download-time graph.

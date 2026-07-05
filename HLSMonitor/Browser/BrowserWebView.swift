@@ -240,6 +240,17 @@ final class BrowserViewModel: NSObject, ObservableObject {
                     hls.destroy();
                     playNatively();
                 });
+                // Feed remuxed audio segments to the injected loudness meter:
+                // WebKit gives the page no PCM access to <video> audio, so
+                // LUFS is measured from the stream content instead.
+                hls.on(Hls.Events.BUFFER_APPENDING, function(_, data) {
+                    if (data.type !== 'audio' || !data.data) { return; }
+                    if (data.frag && data.frag.sn === 'initSegment') {
+                        if (window.__hlsMonitorAudioInit) { window.__hlsMonitorAudioInit(data.data); }
+                    } else if (window.__hlsMonitorAudioChunk) {
+                        window.__hlsMonitorAudioChunk(data.data);
+                    }
+                });
                 hls.loadSource(src);
                 hls.attachMedia(video);
             } else {

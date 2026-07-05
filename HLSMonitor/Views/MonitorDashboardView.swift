@@ -43,6 +43,7 @@ struct MonitorDashboardView: View {
         DownloadChartCard(monitor: monitor)
         SegmentsCard(monitor: monitor)
         DownloadMetricsRow(monitor: monitor)
+        LoudnessCard(monitor: monitor)
         StreamsCard(monitor: monitor)
         EventsCard(monitor: monitor)
     }
