@@ -21,28 +21,59 @@ struct ContentView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            VStack(spacing: 0) {
-                VStack(spacing: 0) {
-                    urlBar
-                    if browser.isLoading {
-                        ProgressView(value: browser.progress)
-                            .progressViewStyle(.linear)
-                            .tint(.blue)
-                    }
-                    BrowserWebView(webView: browser.webView)
-                }
-                .frame(height: isBrowserExpanded ? geometry.size.height : geometry.size.height / 2)
+            let isLandscape = geometry.size.width > geometry.size.height
 
-                if !isBrowserExpanded {
-                    Divider()
-
-                    MonitorPanelView(monitor: monitor)
-                        .frame(maxHeight: .infinity)
+            Group {
+                if isLandscape {
+                    landscapeLayout(geometry: geometry)
+                } else {
+                    portraitLayout(geometry: geometry)
                 }
             }
             .animation(.easeInOut(duration: 0.25), value: isBrowserExpanded)
+            .animation(.easeInOut(duration: 0.3), value: isLandscape)
         }
         .ignoresSafeArea(.keyboard)
+    }
+
+    private var browserSection: some View {
+        VStack(spacing: 0) {
+            urlBar
+            if browser.isLoading {
+                ProgressView(value: browser.progress)
+                    .progressViewStyle(.linear)
+                    .tint(.blue)
+            }
+            BrowserWebView(webView: browser.webView)
+        }
+    }
+
+    private func portraitLayout(geometry: GeometryProxy) -> some View {
+        VStack(spacing: 0) {
+            browserSection
+                .frame(height: isBrowserExpanded ? geometry.size.height : geometry.size.height / 2)
+
+            if !isBrowserExpanded {
+                Divider()
+
+                MonitorPanelView(monitor: monitor)
+                    .frame(maxHeight: .infinity)
+            }
+        }
+    }
+
+    private func landscapeLayout(geometry: GeometryProxy) -> some View {
+        HStack(spacing: 0) {
+            browserSection
+                .frame(width: isBrowserExpanded ? geometry.size.width : geometry.size.width / 2)
+
+            if !isBrowserExpanded {
+                Divider()
+
+                MonitorPanelView(monitor: monitor)
+                    .frame(maxWidth: .infinity)
+            }
+        }
     }
 
     private var urlBar: some View {
