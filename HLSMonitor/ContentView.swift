@@ -22,62 +22,37 @@ struct ContentView: View {
     }
 
     var body: some View {
-        // The root ZStack fills the window naturally (no explicit frame that can
-        // collapse to zero on the first layout pass and cause a black screen).
-        // GeometryReader is used only to decide orientation and split proportions.
-        ZStack {
-            Color(.systemGroupedBackground)
-                .ignoresSafeArea()
-
-            GeometryReader { geometry in
-                // Prefer the live geometry when it is valid; otherwise fall back to
-                // the interface orientation so the very first launch is correct even
-                // before SwiftUI reports a real size.
-                let hasValidGeometry = geometry.size.width > 0 && geometry.size.height > 0
-                let isLandscape = hasValidGeometry
-                    ? geometry.size.width > geometry.size.height
-                    : interfaceIsLandscape
-
-                let size = hasValidGeometry ? geometry.size : fallbackSize()
-
-                Group {
-                    if isLandscape {
-                        landscapeLayout(size: size)
-                    } else {
-                        portraitLayout(size: size)
-                    }
-                }
-                .frame(width: size.width, height: size.height)
-                .animation(.easeInOut(duration: 0.25), value: isBrowserExpanded)
-                .animation(.easeInOut(duration: 0.3), value: isLandscape)
-            }
-        }
-        .ignoresSafeArea(.keyboard)
-        .onAppear { interfaceIsLandscape = ContentView.currentInterfaceIsLandscape() }
-        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
-            interfaceIsLandscape = ContentView.currentInterfaceIsLandscape()
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            // Returning to the foreground (e.g. after the phone was unlocked)
-            // can leave the web view's video stalled. Re-prime playback.
-            if newPhase == .active {
+        // Layout uses only flexible frames (maxWidth/maxHeight) so it can never
+        // collapse to a zero-sized frame on the first pass and show a black
+        // launch screen. Orientation is tracked as a simple boolean driven by
+        // the interface orientation rather than a GeometryReader wrapping an
+        // explicit width/height frame.
+        content
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .animation(.easeInOut(duration: 0.25), value: isBrowserExpanded)
+            .animation(.easeInOut(duration: 0.3), value: interfaceIsLandscape)
+            .ignoresSafeArea(.keyboard)
+            .onAppear { interfaceIsLandscape = ContentView.currentInterfaceIsLandscape() }
+            .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
                 interfaceIsLandscape = ContentView.currentInterfaceIsLandscape()
-                browser.recoverPlaybackAfterForeground()
             }
-        }
+            .onChange(of: scenePhase) { _, newPhase in
+                // Returning to the foreground (e.g. after the phone was unlocked)
+                // can leave the web view's video stalled. Re-prime playback.
+                if newPhase == .active {
+                    interfaceIsLandscape = ContentView.currentInterfaceIsLandscape()
+                    browser.recoverPlaybackAfterForeground()
+                }
+            }
     }
 
-    /// A best-effort screen size for the first layout pass, read from the active
-    /// window scene (avoids the deprecated, scene-unaware `UIScreen.main`).
-    private func fallbackSize() -> CGSize {
-        let scene = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }
-            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
-        if let bounds = scene?.screen.bounds, bounds.width > 0, bounds.height > 0 {
-            return bounds.size
+    @ViewBuilder
+    private var content: some View {
+        if interfaceIsLandscape {
+            landscapeLayout
+        } else {
+            portraitLayout
         }
-        return CGSize(width: 390, height: 844)
     }
 
     /// Reads the live interface orientation from the active window scene.
@@ -128,32 +103,36 @@ struct ContentView: View {
         }
     }
 
-    private func portraitLayout(size: CGSize) -> some View {
+    private var portraitLayout: some View {
         VStack(spacing: 0) {
             browserSection
-                .frame(height: isBrowserExpanded ? size.height : size.height / 2)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(isBrowserExpanded ? 1 : 0)
 
             if !isBrowserExpanded {
                 Divider()
 
                 MonitorPanelView(monitor: monitor)
-                    .frame(maxHeight: .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func landscapeLayout(size: CGSize) -> some View {
+    private var landscapeLayout: some View {
         HStack(spacing: 0) {
             browserSection
-                .frame(width: isBrowserExpanded ? size.width : size.width / 2)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(isBrowserExpanded ? 1 : 0)
 
             if !isBrowserExpanded {
                 Divider()
 
                 MonitorPanelView(monitor: monitor)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var urlBar: some View {
