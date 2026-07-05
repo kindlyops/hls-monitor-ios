@@ -230,12 +230,12 @@ private struct DownloadGraphView: View {
                     message: "Segment download times will chart here as the player fetches media."
                 )
             } else {
-                VStack(spacing: 12) {
+                VStack(spacing: 10) {
                     graphCard
                     metricsRow
                 }
-                .padding()
-                .padding(.bottom, 8)
+                .padding(.horizontal)
+                .padding(.vertical, 10)
             }
         }
     }
@@ -244,7 +244,7 @@ private struct DownloadGraphView: View {
         let samples = monitor.segments.recentSamples
         let failures = monitor.segments.recentFailureMarkers
         let peak = max(samples.map(\.downloadMs).max() ?? 1, 1)
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Label("Segment Download Time", systemImage: "waveform.path.ecg")
                     .font(.subheadline.weight(.semibold))
@@ -266,7 +266,7 @@ private struct DownloadGraphView: View {
                 .animation(.easeOut(duration: 0.3), value: samples.count)
                 .animation(.easeOut(duration: 0.3), value: failures.count)
             }
-            .frame(height: 120)
+            .frame(height: 64)
 
             HStack(spacing: 10) {
                 Text(String(format: "Peak %.0f ms · %d recent segments", peak, samples.count))
@@ -283,7 +283,7 @@ private struct DownloadGraphView: View {
                 }
             }
         }
-        .padding()
+        .padding(12)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
     }
 
@@ -459,18 +459,19 @@ private struct LiveStatsView: View {
                     message: "Navigate to a page with an HLS video player. Manifests and segments will appear here automatically."
                 )
             } else {
-                VStack(spacing: 12) {
+                VStack(spacing: 10) {
                     playbackGrid
                     segmentCard
                 }
-                .padding()
+                .padding(.horizontal)
+                .padding(.vertical, 10)
             }
         }
     }
 
     private var playbackGrid: some View {
         let stats = monitor.playback ?? PlaybackStats()
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Label("Playback", systemImage: "play.tv")
                     .font(.subheadline.weight(.semibold))
@@ -482,7 +483,7 @@ private struct LiveStatsView: View {
                     )
                 }
             }
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                 StatCell(title: "Resolution", value: stats.resolutionText)
                 StatCell(title: "Buffer", value: String(format: "%.1fs", stats.bufferedSeconds),
                          color: stats.bufferedSeconds < 2 && monitor.playback != nil ? .orange : .primary)
@@ -493,22 +494,22 @@ private struct LiveStatsView: View {
                 StatCell(title: "Rendition", value: monitor.activeVariant.map { "\($0.height ?? 0)p" } ?? "—")
             }
         }
-        .padding()
+        .padding(12)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
     }
 
     private var segmentCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Label("Segments", systemImage: "square.stack.3d.down.right")
                 .font(.subheadline.weight(.semibold))
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                 StatCell(title: "Loaded", value: "\(monitor.segments.count)")
                 StatCell(title: "Transferred", value: monitor.segments.count > 0 ? monitor.segments.totalBytesText : "—")
                 StatCell(title: "Throughput",
                          value: monitor.segments.averageBitrateMbps.map { String(format: "%.1f Mbps", $0) } ?? "—")
             }
         }
-        .padding()
+        .padding(12)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
     }
 
