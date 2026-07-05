@@ -36,6 +36,14 @@ final class HLSMonitorViewModel: ObservableObject {
     private var sessionStallCount = 0
     private var sessionGapCount = 0
     private var sessionQualitySwitchCount = 0
+    private var sessionEvents: [QualityEvent] = []
+
+    private func recordSessionEvent(_ kind: QualityEvent.Kind) {
+        // Cap so a pathological stream can't grow the store unboundedly;
+        // counts stay exact, the timeline just saturates.
+        guard sessionEvents.count < 1_000 else { return }
+        sessionEvents.append(QualityEvent(date: Date(), kind: kind))
+    }
 
     private var knownManifestURLs: Set<String> = []
     private var fetchingURLs: Set<String> = []
@@ -65,6 +73,7 @@ final class HLSMonitorViewModel: ObservableObject {
         sessionStallCount = 0
         sessionGapCount = 0
         sessionQualitySwitchCount = 0
+        sessionEvents.removeAll()
         log(.info, "Monitoring reset", detail: "New page loaded")
     }
 
@@ -88,7 +97,8 @@ final class HLSMonitorViewModel: ObservableObject {
             peakDownloadMs: sessionDownloadTimes.max(),
             averageBitrateMbps: segments.averageBitrateMbps,
             isLive: mediaStream?.isLive,
-            lastResolution: playback.flatMap { $0.width > 0 ? $0.resolutionText : nil }
+            lastResolution: playback.flatMap { $0.width > 0 ? $0.resolutionText : nil },
+            qualityEvents: sessionEvents
         )
     }
 
@@ -102,6 +112,7 @@ final class HLSMonitorViewModel: ObservableObject {
         sessionStallCount = 0
         sessionGapCount = 0
         sessionQualitySwitchCount = 0
+        sessionEvents.removeAll()
         log(.info, "Session saved",
             detail: "\(session.segmentCount) segments · \(session.streamURL)")
     }
@@ -223,6 +234,7 @@ final class HLSMonitorViewModel: ObservableObject {
             let gapThreshold = max(2 * (mediaTargetDuration ?? 6), 8)
             if gap > gapThreshold {
                 sessionGapCount += 1
+                recordSessionEvent(.gap)
                 appendEventMarker(.downloadGap(gap))
                 log(.error, "Download gap", detail: String(format: "%.0f s without a segment", gap))
             }
@@ -266,6 +278,7 @@ final class HLSMonitorViewModel: ObservableObject {
         let name = shortName(urlString)
 
         segments.failureCount += 1
+        recordSessionEvent(.failure)
         segments.lastFailureName = name
         segments.lastFailureDate = Date()
 
@@ -296,6 +309,7 @@ final class HLSMonitorViewModel: ObservableObject {
             // The first report is the starting rendition, not a switch.
             if !lastQuality.isEmpty {
                 sessionQualitySwitchCount += 1
+                recordSessionEvent(.qualitySwitch)
                 appendEventMarker(.qualityChange(detail))
             }
             lastQuality = detail
@@ -306,6 +320,7 @@ final class HLSMonitorViewModel: ObservableObject {
             log(.playback, "Playback recovered", detail: detail.isEmpty ? "resumed after foreground" : detail)
         case "waiting", "stalled":
             sessionStallCount += 1
+            recordSessionEvent(.stall)
             log(.error, "Buffering (\(name))")
         case "play", "pause", "ended", "loadedmetadata":
             log(.playback, name.capitalized, detail: detail)

@@ -8,6 +8,27 @@
 
 import Foundation
 
+/// A timestamped quality incident within a session, for the report timeline.
+struct QualityEvent: Codable {
+    enum Kind: String, Codable {
+        case failure
+        case gap
+        case stall
+        case qualitySwitch
+    }
+
+    var date: Date
+    var kind: Kind
+}
+
+/// A continuous span of wall-clock time that was actually monitored. A
+/// consolidated session carries one per source session so the timeline can
+/// show coverage gaps between them.
+struct MonitoredSpan: Codable {
+    var start: Date
+    var end: Date
+}
+
 struct MonitoringSession: Codable, Identifiable {
     var id = UUID()
     var streamURL: String
@@ -28,6 +49,17 @@ struct MonitoringSession: Codable, Identifiable {
     /// Number of raw sessions merged into this one (1 for an unconsolidated
     /// session).
     var consolidatedCount: Int = 1
+
+    /// Timestamped incidents for the report timeline. Optional so sessions
+    /// persisted before this field existed still decode.
+    var qualityEvents: [QualityEvent]?
+    /// Monitored spans; nil means the single span startDate...endDate.
+    var spansOverride: [MonitoredSpan]?
+
+    var events: [QualityEvent] { qualityEvents ?? [] }
+    var spans: [MonitoredSpan] {
+        spansOverride ?? [MonitoredSpan(start: startDate, end: endDate)]
+    }
 
     var duration: TimeInterval { endDate.timeIntervalSince(startDate) }
 
@@ -53,6 +85,10 @@ struct MonitoringSession: Codable, Identifiable {
         merged.qualitySwitchCount = sessions.reduce(0) { $0 + $1.qualitySwitchCount }
         merged.consolidatedCount = sessions.count
         merged.monitoredSeconds = monitoredSeconds
+        merged.qualityEvents = sessions.flatMap(\.events).sorted { $0.date < $1.date }
+        merged.spansOverride = sessions
+            .map { MonitoredSpan(start: $0.startDate, end: $0.endDate) }
+            .sorted { $0.start < $1.start }
 
         let weighted = sessions.filter { $0.medianDownloadMs != nil && $0.segmentCount > 0 }
         let totalWeight = weighted.reduce(0) { $0 + $1.segmentCount }
