@@ -27,7 +27,7 @@ struct MonitorPanelView: View {
         var symbol: String {
             switch self {
             case .live: return "waveform.path.ecg"
-            case .download: return "chart.bar.xaxis"
+            case .download: return "waveform.path.ecg.rectangle"
             case .streams: return "list.bullet.rectangle"
             case .events: return "text.line.first.and.arrowtriangle.forward"
             }
@@ -189,6 +189,7 @@ private struct DownloadGraphView: View {
                     metricsRow
                 }
                 .padding()
+                .padding(.bottom, 8)
             }
         }
     }
@@ -198,7 +199,7 @@ private struct DownloadGraphView: View {
         let peak = max(samples.map(\.downloadMs).max() ?? 1, 1)
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("Segment Download Time", systemImage: "chart.bar.xaxis")
+                Label("Segment Download Time", systemImage: "waveform.path.ecg")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
                 if let last = monitor.segments.lastDownloadMs {
@@ -209,18 +210,11 @@ private struct DownloadGraphView: View {
             }
 
             GeometryReader { geo in
-                let count = samples.count
-                let spacing: CGFloat = count > 20 ? 2 : 4
-                let barWidth = max((geo.size.width - spacing * CGFloat(count - 1)) / CGFloat(count), 1)
-                HStack(alignment: .bottom, spacing: spacing) {
-                    ForEach(samples) { sample in
-                        let ratio = CGFloat(sample.downloadMs / peak)
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(barColor(for: sample.downloadMs, peak: peak))
-                            .frame(width: barWidth, height: max(ratio * geo.size.height, 2))
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                LineChart(
+                    values: samples.map(\.downloadMs),
+                    peak: peak,
+                    size: geo.size
+                )
                 .animation(.easeOut(duration: 0.3), value: samples.count)
             }
             .frame(height: 120)
@@ -246,6 +240,96 @@ private struct DownloadGraphView: View {
         if ms > 2000 { return .orange }
         if ms > peak * 0.75 { return .teal }
         return .accentColor
+    }
+}
+
+// MARK: - Line Chart
+
+/// Smooth line chart with a soft area fill and endpoint dot for download times.
+private struct LineChart: View {
+    let values: [Double]
+    let peak: Double
+    let size: CGSize
+
+    var body: some View {
+        ZStack {
+            // Baseline grid line
+            Path { path in
+                path.move(to: CGPoint(x: 0, y: size.height))
+                path.addLine(to: CGPoint(x: size.width, y: size.height))
+            }
+            .stroke(Color(.systemGray4).opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+
+            if points.count >= 2 {
+                // Soft area fill under the line
+                areaPath
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.accentColor.opacity(0.28), Color.accentColor.opacity(0.02)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                // The line itself
+                linePath
+                    .stroke(
+                        Color.accentColor,
+                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
+                    )
+
+                // Endpoint marker
+                if let last = points.last {
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 8, height: 8)
+                        .shadow(color: Color.accentColor.opacity(0.6), radius: 4)
+                        .position(last)
+                }
+            } else if let only = points.first {
+                Circle()
+                    .fill(Color.accentColor)
+                    .frame(width: 8, height: 8)
+                    .position(only)
+            }
+        }
+    }
+
+    /// Maps values to points inside the geometry, padding the top so the peak isn't clipped.
+    private var points: [CGPoint] {
+        guard !values.isEmpty else { return [] }
+        let topInset: CGFloat = 6
+        let usableHeight = max(size.height - topInset, 1)
+        let stepX = values.count > 1 ? size.width / CGFloat(values.count - 1) : 0
+        return values.enumerated().map { index, value in
+            let ratio = CGFloat(value / peak)
+            let x = values.count > 1 ? CGFloat(index) * stepX : size.width / 2
+            let y = topInset + (1 - ratio) * usableHeight
+            return CGPoint(x: x, y: y)
+        }
+    }
+
+    private var linePath: Path {
+        Path { path in
+            guard let first = points.first else { return }
+            path.move(to: first)
+            for point in points.dropFirst() {
+                path.addLine(to: point)
+            }
+        }
+    }
+
+    private var areaPath: Path {
+        Path { path in
+            guard let first = points.first, let last = points.last else { return }
+            path.move(to: CGPoint(x: first.x, y: size.height))
+            path.addLine(to: first)
+            for point in points.dropFirst() {
+                path.addLine(to: point)
+            }
+            path.addLine(to: CGPoint(x: last.x, y: size.height))
+            path.closeSubpath()
+        }
     }
 }
 
