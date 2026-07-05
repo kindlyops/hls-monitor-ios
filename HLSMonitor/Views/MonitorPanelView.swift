@@ -226,16 +226,14 @@ private struct DownloadGraphView: View {
                 Text(String(format: "Peak %.0f ms · %d recent segments", peak, samples.count))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                if !failures.isEmpty {
-                    Spacer(minLength: 0)
-                    HStack(spacing: 4) {
-                        Rectangle()
-                            .fill(Color.red)
-                            .frame(width: 2, height: 10)
-                        Text("failed")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+                Spacer(minLength: 0)
+                HStack(spacing: 4) {
+                    Rectangle()
+                        .fill(failures.isEmpty ? Color(.systemGray3) : Color.red)
+                        .frame(width: 2, height: 10)
+                    Text(failures.isEmpty ? "no failures" : "\(monitor.segments.failureCount) failed")
+                        .font(.caption2)
+                        .foregroundStyle(failures.isEmpty ? .secondary : Color.red)
                 }
             }
         }
