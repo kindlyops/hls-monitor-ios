@@ -9,7 +9,7 @@ struct MonitorPanelView: View {
     @ObservedObject var monitor: HLSMonitorViewModel
     @State private var selectedCard: Int = 0
 
-    private enum Card: Int, CaseIterable {
+    fileprivate enum Card: Int, CaseIterable {
         case live
         case download
         case streams
@@ -55,35 +55,61 @@ struct MonitorPanelView: View {
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
 
-            // Custom pill page indicator with labels.
-            HStack(spacing: 6) {
-                ForEach(Card.allCases, id: \.rawValue) { card in
-                    let isSelected = card.rawValue == selectedCard
-                    HStack(spacing: 5) {
-                        Image(systemName: card.symbol)
-                            .font(.caption2)
-                        if isSelected {
-                            Text(card.title)
-                                .font(.caption2.weight(.semibold))
-                                .transition(.opacity.combined(with: .scale))
-                        }
-                    }
-                    .padding(.horizontal, isSelected ? 10 : 8)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule().fill(isSelected ? Color.accentColor.opacity(0.18) : Color(.secondarySystemGroupedBackground))
-                    )
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-                    .contentShape(Capsule())
-                    .onTapGesture {
-                        withAnimation(.snappy(duration: 0.25)) { selectedCard = card.rawValue }
-                    }
-                }
-            }
-            .padding(.vertical, 10)
-            .animation(.snappy(duration: 0.25), value: selectedCard)
+            // Custom pill page indicator with labels. Rendered as its own view so
+            // it can read the panel's bottom safe-area inset and never get clipped
+            // by the home indicator.
+            PageIndicatorBar(selectedCard: $selectedCard)
         }
         .background(Color(.systemGroupedBackground))
+    }
+}
+
+// MARK: - Page indicator
+
+/// The bottom pill row. Reads its own safe-area inset via a GeometryReader-backed
+/// background so the pills always sit clear of the home indicator.
+private struct PageIndicatorBar: View {
+    @Binding var selectedCard: Int
+    @State private var bottomInset: CGFloat = 0
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(MonitorPanelView.Card.allCases, id: \.rawValue) { card in
+                let isSelected = card.rawValue == selectedCard
+                HStack(spacing: 5) {
+                    Image(systemName: card.symbol)
+                        .font(.caption2)
+                    if isSelected {
+                        Text(card.title)
+                            .font(.caption2.weight(.semibold))
+                            .transition(.opacity.combined(with: .scale))
+                    }
+                }
+                .padding(.horizontal, isSelected ? 10 : 8)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule().fill(isSelected ? Color.accentColor.opacity(0.18) : Color(.secondarySystemGroupedBackground))
+                )
+                .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                .contentShape(Capsule())
+                .onTapGesture {
+                    withAnimation(.snappy(duration: 0.25)) { selectedCard = card.rawValue }
+                }
+            }
+        }
+        .padding(.top, 10)
+        .padding(.bottom, max(bottomInset, 8))
+        .frame(maxWidth: .infinity)
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { bottomInset = proxy.safeAreaInsets.bottom }
+                    .onChange(of: proxy.safeAreaInsets.bottom) { _, newValue in
+                        bottomInset = newValue
+                    }
+            }
+        )
+        .animation(.snappy(duration: 0.25), value: selectedCard)
     }
 }
 

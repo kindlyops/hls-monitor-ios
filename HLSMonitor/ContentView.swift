@@ -12,6 +12,7 @@ struct ContentView: View {
     @StateObject private var browser: BrowserViewModel
     @FocusState private var urlFieldFocused: Bool
     @State private var isBrowserExpanded = false
+    @State private var interfaceIsLandscape: Bool = ContentView.currentInterfaceIsLandscape()
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -22,7 +23,14 @@ struct ContentView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let isLandscape = geometry.size.width > geometry.size.height
+            // On the very first launch in landscape, SwiftUI can briefly report
+            // portrait-sized geometry before the scene finishes rotating. Fall
+            // back to the actual interface orientation until geometry settles so
+            // we render the correct layout immediately.
+            let geometryLandscape = geometry.size.width > geometry.size.height
+            let isLandscape = geometry.size.width == geometry.size.height
+                ? interfaceIsLandscape
+                : geometryLandscape
 
             Group {
                 if isLandscape {
@@ -35,13 +43,27 @@ struct ContentView: View {
             .animation(.easeInOut(duration: 0.3), value: isLandscape)
         }
         .ignoresSafeArea(.keyboard)
+        .onAppear { interfaceIsLandscape = ContentView.currentInterfaceIsLandscape() }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+            interfaceIsLandscape = ContentView.currentInterfaceIsLandscape()
+        }
         .onChange(of: scenePhase) { _, newPhase in
             // Returning to the foreground (e.g. after the phone was unlocked)
             // can leave the web view's video stalled. Re-prime playback.
             if newPhase == .active {
+                interfaceIsLandscape = ContentView.currentInterfaceIsLandscape()
                 browser.recoverPlaybackAfterForeground()
             }
         }
+    }
+
+    /// Reads the live interface orientation from the active window scene.
+    private static func currentInterfaceIsLandscape() -> Bool {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        return scene?.interfaceOrientation.isLandscape ?? false
     }
 
     private var browserSection: some View {
