@@ -27,13 +27,21 @@ final class SampleHandler: RPBroadcastSampleHandler {
         _ sampleBuffer: CMSampleBuffer,
         with sampleBufferType: RPSampleBufferType
     ) {
-        guard sampleBufferType == .audioApp else { return }
-        meter.process(sampleBuffer: sampleBuffer)
+        if sampleBufferType == .audioApp {
+            meter.process(sampleBuffer: sampleBuffer)
+        }
+        // Heartbeat from video buffers too, so the app can tell "extension
+        // alive but receiving no audio" from "extension not running".
+        guard sampleBufferType == .audioApp || sampleBufferType == .video else { return }
 
         let now = Date()
         guard now.timeIntervalSince(lastWrite) >= 0.25 else { return }
         lastWrite = now
-        defaults?.set(SharedLoudness.encode(meter.levels, at: now),
+        let diagnostics = SharedLoudness.Diagnostics(
+            buffersReceived: meter.buffersReceived,
+            buffersConsumed: meter.buffersConsumed
+        )
+        defaults?.set(SharedLoudness.encode(meter.levels, diagnostics: diagnostics, at: now),
                       forKey: SharedLoudness.levelsKey)
     }
 

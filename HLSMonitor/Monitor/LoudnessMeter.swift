@@ -13,6 +13,7 @@
 
 import Foundation
 import CoreMedia
+import AVFoundation
 
 /// K-weighted loudness measurements. Values are LUFS (peak is sample-peak
 /// dBFS); nil means silence / not yet enough audio for that window.
@@ -32,8 +33,22 @@ enum SharedLoudness {
     static let appGroup = "group.com.kindlyops.HLSMonitor"
     static let levelsKey = "HLSMonitor.systemLoudness"
 
-    static func encode(_ levels: AudioLoudness, at date: Date) -> [String: Double] {
-        var payload: [String: Double] = ["timestamp": date.timeIntervalSince1970]
+    /// Capture-health counters written alongside the levels so the app can
+    /// tell "no audio buffers delivered" from "buffers arrive but can't be
+    /// decoded" without attaching a debugger to the extension.
+    struct Diagnostics {
+        var buffersReceived = 0
+        var buffersConsumed = 0
+    }
+
+    static func encode(
+        _ levels: AudioLoudness, diagnostics: Diagnostics, at date: Date
+    ) -> [String: Double] {
+        var payload: [String: Double] = [
+            "timestamp": date.timeIntervalSince1970,
+            "buffersReceived": Double(diagnostics.buffersReceived),
+            "buffersConsumed": Double(diagnostics.buffersConsumed),
+        ]
         payload["momentary"] = levels.momentary
         payload["shortTerm"] = levels.shortTerm
         payload["integrated"] = levels.integrated
@@ -41,8 +56,10 @@ enum SharedLoudness {
         return payload
     }
 
-    /// Returns the stored levels and their write time, or nil if absent.
-    static func decode(_ payload: [String: Double]) -> (levels: AudioLoudness, date: Date)? {
+    /// Returns the stored levels, capture diagnostics, and write time.
+    static func decode(
+        _ payload: [String: Double]
+    ) -> (levels: AudioLoudness, diagnostics: Diagnostics, date: Date)? {
         guard let timestamp = payload["timestamp"] else { return nil }
         let levels = AudioLoudness(
             momentary: payload["momentary"],
@@ -50,7 +67,11 @@ enum SharedLoudness {
             integrated: payload["integrated"],
             peakDbfs: payload["peakDbfs"]
         )
-        return (levels, Date(timeIntervalSince1970: timestamp))
+        let diagnostics = Diagnostics(
+            buffersReceived: Int(payload["buffersReceived"] ?? 0),
+            buffersConsumed: Int(payload["buffersConsumed"] ?? 0)
+        )
+        return (levels, diagnostics, Date(timeIntervalSince1970: timestamp))
     }
 }
 
@@ -84,6 +105,15 @@ final class LoudnessMeter {
     private var samplesIntoHop = 0
     private var sumSquares = 0.0
     private var currentHopPeak = 0.0
+
+    // CMSampleBuffer ingestion state and diagnostics.
+    private var converter: AVAudioConverter?
+    private var converterSourceFormat: AVAudioFormat?
+    /// Sample buffers offered to / successfully metered by
+    /// process(sampleBuffer:). Consumed staying at zero while received climbs
+    /// means the capture format could not be decoded.
+    private(set) var buffersReceived = 0
+    private(set) var buffersConsumed = 0
     /// Rolling K-weighted mean squares per 100ms hop (3s window).
     private var hopMeanSquares: [Double] = []
     /// Rolling unweighted sample peak per hop (3s window).
@@ -224,68 +254,62 @@ final class LoudnessMeter {
 
 extension LoudnessMeter {
 
-    /// Feeds a captured audio sample buffer (e.g. from ReplayKit).
+    /// Feeds a captured audio sample buffer (e.g. from ReplayKit). Broadcast
+    /// capture delivers PCM in varying layouts — notably big-endian Int16 —
+    /// so the buffer is normalized to deinterleaved Float32 through
+    /// AVAudioConverter rather than parsed by hand.
     func process(sampleBuffer: CMSampleBuffer) {
+        buffersReceived += 1
         guard let format = CMSampleBufferGetFormatDescription(sampleBuffer),
-              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format),
+              let sourceFormat = AVAudioFormat(streamDescription: asbd)
         else { return }
 
-        let bufferList = AudioBufferList.allocate(maximumBuffers: 8)
-        defer { free(bufferList.unsafeMutablePointer) }
-        var blockBuffer: CMBlockBuffer?
-        let status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+        let frames = AVAudioFrameCount(CMSampleBufferGetNumSamples(sampleBuffer))
+        guard frames > 0,
+              let inputBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: frames)
+        else { return }
+        inputBuffer.frameLength = frames
+        let copyStatus = CMSampleBufferCopyPCMDataIntoAudioBufferList(
             sampleBuffer,
-            bufferListSizeNeededOut: nil,
-            bufferListOut: bufferList.unsafeMutablePointer,
-            bufferListSize: AudioBufferList.sizeInBytes(maximumBuffers: 8),
-            blockBufferAllocator: nil,
-            blockBufferMemoryAllocator: nil,
-            flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
-            blockBufferOut: &blockBuffer
+            at: 0,
+            frameCount: Int32(frames),
+            into: inputBuffer.mutableAudioBufferList
         )
-        guard status == noErr else { return }
+        guard copyStatus == noErr else { return }
 
-        let channels = Self.deinterleave(bufferList: bufferList, asbd: asbd)
-        guard !channels.isEmpty else { return }
-        process(channels: channels, sampleRate: asbd.mSampleRate)
-    }
-
-    /// Converts an AudioBufferList (Float32 or Int16, interleaved or planar)
-    /// into per-channel float arrays.
-    private static func deinterleave(
-        bufferList: UnsafeMutableAudioBufferListPointer,
-        asbd: AudioStreamBasicDescription
-    ) -> [[Float]] {
-        let isFloat = asbd.mFormatFlags & kAudioFormatFlagIsFloat != 0
-        let isPlanar = asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0
-        let bytesPerSample = Int(asbd.mBitsPerChannel) / 8
-        guard bytesPerSample == (isFloat ? 4 : 2) else { return [] }
-
-        func samples(in buffer: AudioBuffer) -> [Float] {
-            guard let data = buffer.mData else { return [] }
-            let count = Int(buffer.mDataByteSize) / bytesPerSample
-            if isFloat {
-                let floats = data.bindMemory(to: Float32.self, capacity: count)
-                return (0..<count).map { floats[$0] }
+        let floatBuffer: AVAudioPCMBuffer
+        if sourceFormat.commonFormat == .pcmFormatFloat32, !sourceFormat.isInterleaved {
+            floatBuffer = inputBuffer
+        } else {
+            guard let targetFormat = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: sourceFormat.sampleRate,
+                channels: sourceFormat.channelCount,
+                interleaved: false
+            ) else { return }
+            if converterSourceFormat != sourceFormat {
+                converter = AVAudioConverter(from: sourceFormat, to: targetFormat)
+                converterSourceFormat = sourceFormat
             }
-            let ints = data.bindMemory(to: Int16.self, capacity: count)
-            return (0..<count).map { Float(ints[$0]) / 32768 }
+            guard let converter,
+                  let converted = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: frames)
+            else { return }
+            do {
+                try converter.convert(to: converted, from: inputBuffer)
+            } catch {
+                return
+            }
+            floatBuffer = converted
         }
 
-        if isPlanar {
-            return bufferList.map { samples(in: $0) }
+        guard let channelData = floatBuffer.floatChannelData else { return }
+        let frameCount = Int(floatBuffer.frameLength)
+        guard frameCount > 0 else { return }
+        let channels = (0..<Int(floatBuffer.format.channelCount)).map {
+            Array(UnsafeBufferPointer(start: channelData[$0], count: frameCount))
         }
-        guard let buffer = bufferList.first else { return [] }
-        let channelCount = max(Int(buffer.mNumberChannels), 1)
-        let interleaved = samples(in: buffer)
-        guard channelCount > 1 else { return [interleaved] }
-        let frames = interleaved.count / channelCount
-        var channels = Array(repeating: [Float](repeating: 0, count: frames), count: channelCount)
-        for frame in 0..<frames {
-            for channel in 0..<channelCount {
-                channels[channel][frame] = interleaved[frame * channelCount + channel]
-            }
-        }
-        return channels
+        buffersConsumed += 1
+        process(channels: channels, sampleRate: sourceFormat.sampleRate)
     }
 }

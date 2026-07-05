@@ -25,6 +25,7 @@ final class HLSMonitorViewModel: ObservableObject {
 
     private let sharedDefaults = UserDefaults(suiteName: SharedLoudness.appGroup)
     private var systemMeterTimer: Timer?
+    private var loggedCaptureProblem = false
 
     private var knownManifestURLs: Set<String> = []
     private var fetchingURLs: Set<String> = []
@@ -278,10 +279,11 @@ final class HLSMonitorViewModel: ObservableObject {
     private func readSystemLoudness() {
         let stored = sharedDefaults?.dictionary(forKey: SharedLoudness.levelsKey) as? [String: Double]
         guard let stored,
-              let (levels, date) = SharedLoudness.decode(stored),
+              let (levels, diagnostics, date) = SharedLoudness.decode(stored),
               Date().timeIntervalSince(date) < 1.5 else {
             if systemMeteringActive {
                 systemMeteringActive = false
+                loggedCaptureProblem = false
                 audio = nil
                 audioHistory.removeAll()
                 log(.info, "Device audio metering stopped")
@@ -290,9 +292,18 @@ final class HLSMonitorViewModel: ObservableObject {
         }
         if !systemMeteringActive {
             systemMeteringActive = true
+            loggedCaptureProblem = false
             audioHistory.removeAll()
             log(.info, "Device audio metering started",
                 detail: "Broadcast capture, levels only — nothing recorded")
+        }
+        // Surface capture problems the levels alone can't distinguish:
+        // buffers never arriving vs. arriving in an undecodable format.
+        if !loggedCaptureProblem, diagnostics.buffersReceived > 40,
+           diagnostics.buffersConsumed == 0 {
+            loggedCaptureProblem = true
+            log(.error, "Captured audio not decodable",
+                detail: "\(diagnostics.buffersReceived) buffers received, none decoded")
         }
         audio = levels
         appendAudioHistory(levels.momentary)
