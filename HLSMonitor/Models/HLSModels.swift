@@ -87,15 +87,40 @@ struct PlaybackStats {
 
 // MARK: - Segment Tracking
 
+/// A single downloaded segment sample used for the download-time graph.
+struct SegmentSample: Identifiable {
+    let id = UUID()
+    let downloadMs: Double
+    let bytes: Int
+    let date: Date
+}
+
 struct SegmentTracker {
     var count: Int = 0
     var totalBytes: Int = 0
     var lastBitrateMbps: Double?
     var averageBitrateMbps: Double?
     var lastSegmentName: String?
+    var lastSegmentDate: Date?
+
+    /// Rolling window of the most recent segment download times (newest last).
+    var recentSamples: [SegmentSample] = []
 
     var totalBytesText: String {
         let mb = Double(totalBytes) / 1_048_576
         return mb >= 1 ? String(format: "%.1f MB", mb) : String(format: "%.0f KB", Double(totalBytes) / 1024)
+    }
+
+    var lastDownloadMs: Double? {
+        recentSamples.last?.downloadMs
+    }
+
+    var averageDownloadMs: Double? {
+        guard !recentSamples.isEmpty else { return nil }
+        return recentSamples.map(\.downloadMs).reduce(0, +) / Double(recentSamples.count)
+    }
+
+    var peakDownloadMs: Double? {
+        recentSamples.map(\.downloadMs).max()
     }
 }

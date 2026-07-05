@@ -129,6 +129,13 @@ final class HLSMonitorViewModel: ObservableObject {
         segments.count += 1
         segments.totalBytes += max(bytes, 0)
         segments.lastSegmentName = shortName(urlString)
+        segments.lastSegmentDate = Date()
+
+        // Record a sample for the download-time graph (keep a rolling window).
+        if durationMs > 0 {
+            segments.recentSamples.append(SegmentSample(downloadMs: durationMs, bytes: max(bytes, 0), date: Date()))
+            if segments.recentSamples.count > 30 { segments.recentSamples.removeFirst() }
+        }
 
         var detail = String(format: "%.0f ms", durationMs)
         if bytes > 0, durationMs > 0 {

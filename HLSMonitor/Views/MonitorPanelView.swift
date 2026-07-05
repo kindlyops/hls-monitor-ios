@@ -7,32 +7,267 @@ import SwiftUI
 
 struct MonitorPanelView: View {
     @ObservedObject var monitor: HLSMonitorViewModel
-    @State private var selectedTab: Tab = .live
+    @State private var selectedCard: Int = 0
 
-    enum Tab: String, CaseIterable {
-        case live = "Live Stats"
-        case streams = "Streams"
-        case events = "Events"
+    private enum Card: Int, CaseIterable {
+        case live
+        case download
+        case streams
+        case events
+
+        var title: String {
+            switch self {
+            case .live: return "Live"
+            case .download: return "Download"
+            case .streams: return "Streams"
+            case .events: return "Events"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .live: return "waveform.path.ecg"
+            case .download: return "chart.bar.xaxis"
+            case .streams: return "list.bullet.rectangle"
+            case .events: return "text.line.first.and.arrowtriangle.forward"
+            }
+        }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $selectedTab) {
-                ForEach(Tab.allCases, id: \.self) { tab in
-                    Text(tab.rawValue).tag(tab)
+            // Compact live header always visible above the carousel.
+            LivePulseHeader(monitor: monitor)
+                .padding(.horizontal)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
+
+            // Swipeable carousel of monitor cards.
+            TabView(selection: $selectedCard) {
+                LiveStatsView(monitor: monitor)
+                    .tag(Card.live.rawValue)
+                DownloadGraphView(monitor: monitor)
+                    .tag(Card.download.rawValue)
+                StreamsListView(monitor: monitor)
+                    .tag(Card.streams.rawValue)
+                EventLogView(monitor: monitor)
+                    .tag(Card.events.rawValue)
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+
+            // Custom pill page indicator with labels.
+            HStack(spacing: 6) {
+                ForEach(Card.allCases, id: \.rawValue) { card in
+                    let isSelected = card.rawValue == selectedCard
+                    HStack(spacing: 5) {
+                        Image(systemName: card.symbol)
+                            .font(.caption2)
+                        if isSelected {
+                            Text(card.title)
+                                .font(.caption2.weight(.semibold))
+                                .transition(.opacity.combined(with: .scale))
+                        }
+                    }
+                    .padding(.horizontal, isSelected ? 10 : 8)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule().fill(isSelected ? Color.accentColor.opacity(0.18) : Color(.secondarySystemGroupedBackground))
+                    )
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                    .contentShape(Capsule())
+                    .onTapGesture {
+                        withAnimation(.snappy(duration: 0.25)) { selectedCard = card.rawValue }
+                    }
                 }
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
-            .padding(.vertical, 8)
-
-            switch selectedTab {
-            case .live: LiveStatsView(monitor: monitor)
-            case .streams: StreamsListView(monitor: monitor)
-            case .events: EventLogView(monitor: monitor)
-            }
+            .padding(.vertical, 10)
+            .animation(.snappy(duration: 0.25), value: selectedCard)
         }
         .background(Color(.systemGroupedBackground))
+    }
+}
+
+// MARK: - Live Pulse Header
+
+/// Compact always-visible strip: pulses on each new segment and counts time since last download.
+private struct LivePulseHeader: View {
+    @ObservedObject var monitor: HLSMonitorViewModel
+    @State private var pulse = false
+    @State private var now = Date()
+
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Pulsing activity dot.
+            ZStack {
+                Circle()
+                    .fill(pulseColor.opacity(0.25))
+                    .frame(width: 26, height: 26)
+                    .scaleEffect(pulse ? 1.5 : 0.8)
+                    .opacity(pulse ? 0 : 0.9)
+                Circle()
+                    .fill(pulseColor)
+                    .frame(width: 11, height: 11)
+                    .shadow(color: pulseColor.opacity(0.6), radius: pulse ? 6 : 2)
+            }
+            .frame(width: 30, height: 30)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(statusText)
+                    .font(.subheadline.weight(.semibold))
+                Text(monitor.segments.lastSegmentName ?? "Waiting for segments…")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(lastSegmentAgo)
+                    .font(.callout.weight(.bold).monospacedDigit())
+                    .foregroundStyle(agoColor)
+                    .contentTransition(.numericText())
+                Text("since last")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        .onReceive(ticker) { now = $0 }
+        .onChange(of: monitor.segments.count) {
+            withAnimation(.easeOut(duration: 0.55)) { pulse = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
+                pulse = false
+            }
+        }
+    }
+
+    private var pulseColor: Color {
+        guard let date = monitor.segments.lastSegmentDate else { return Color(.systemGray3) }
+        let gap = now.timeIntervalSince(date)
+        if gap > 12 { return .orange }
+        return .green
+    }
+
+    private var agoColor: Color {
+        guard let date = monitor.segments.lastSegmentDate else { return .secondary }
+        return now.timeIntervalSince(date) > 12 ? .orange : .primary
+    }
+
+    private var statusText: String {
+        if monitor.segments.count == 0 { return "Monitoring" }
+        return "\(monitor.segments.count) segments"
+    }
+
+    private var lastSegmentAgo: String {
+        guard let date = monitor.segments.lastSegmentDate else { return "—" }
+        let secs = Int(now.timeIntervalSince(date))
+        if secs < 60 { return "\(secs)s" }
+        return String(format: "%d:%02d", secs / 60, secs % 60)
+    }
+}
+
+// MARK: - Download Graph
+
+private struct DownloadGraphView: View {
+    @ObservedObject var monitor: HLSMonitorViewModel
+
+    var body: some View {
+        ScrollView {
+            if monitor.segments.recentSamples.isEmpty {
+                EmptyStateView(
+                    symbol: "chart.bar.xaxis",
+                    title: "No downloads yet",
+                    message: "Segment download times will chart here as the player fetches media."
+                )
+            } else {
+                VStack(spacing: 12) {
+                    graphCard
+                    metricsRow
+                }
+                .padding()
+            }
+        }
+    }
+
+    private var graphCard: some View {
+        let samples = monitor.segments.recentSamples
+        let peak = max(samples.map(\.downloadMs).max() ?? 1, 1)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Segment Download Time", systemImage: "chart.bar.xaxis")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                if let last = monitor.segments.lastDownloadMs {
+                    Text(String(format: "%.0f ms", last))
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(.tint)
+                }
+            }
+
+            GeometryReader { geo in
+                let count = samples.count
+                let spacing: CGFloat = count > 20 ? 2 : 4
+                let barWidth = max((geo.size.width - spacing * CGFloat(count - 1)) / CGFloat(count), 1)
+                HStack(alignment: .bottom, spacing: spacing) {
+                    ForEach(samples) { sample in
+                        let ratio = CGFloat(sample.downloadMs / peak)
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(barColor(for: sample.downloadMs, peak: peak))
+                            .frame(width: barWidth, height: max(ratio * geo.size.height, 2))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .animation(.easeOut(duration: 0.3), value: samples.count)
+            }
+            .frame(height: 120)
+
+            Text(String(format: "Peak %.0f ms · %d recent segments", peak, samples.count))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var metricsRow: some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+            StatCard(title: "Last", value: monitor.segments.lastDownloadMs.map { String(format: "%.0f ms", $0) } ?? "—")
+            StatCard(title: "Average", value: monitor.segments.averageDownloadMs.map { String(format: "%.0f ms", $0) } ?? "—")
+            StatCard(title: "Peak", value: monitor.segments.peakDownloadMs.map { String(format: "%.0f ms", $0) } ?? "—",
+                     color: (monitor.segments.peakDownloadMs ?? 0) > 2000 ? .orange : .primary)
+        }
+    }
+
+    private func barColor(for ms: Double, peak: Double) -> Color {
+        if ms > 2000 { return .orange }
+        if ms > peak * 0.75 { return .teal }
+        return .accentColor
+    }
+}
+
+private struct StatCard: View {
+    let title: String
+    let value: String
+    var color: Color = .primary
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Text(value)
+                .font(.callout.weight(.semibold).monospacedDigit())
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
@@ -61,7 +296,7 @@ private struct LiveStatsView: View {
 
     private var playbackGrid: some View {
         let stats = monitor.playback ?? PlaybackStats()
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("Playback", systemImage: "play.tv")
                     .font(.subheadline.weight(.semibold))
@@ -73,7 +308,7 @@ private struct LiveStatsView: View {
                     )
                 }
             }
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                 StatCell(title: "Resolution", value: stats.resolutionText)
                 StatCell(title: "Buffer", value: String(format: "%.1fs", stats.bufferedSeconds),
                          color: stats.bufferedSeconds < 2 && monitor.playback != nil ? .orange : .primary)
@@ -89,20 +324,14 @@ private struct LiveStatsView: View {
     }
 
     private var segmentCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Label("Segments", systemImage: "square.stack.3d.down.right")
                 .font(.subheadline.weight(.semibold))
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                 StatCell(title: "Loaded", value: "\(monitor.segments.count)")
                 StatCell(title: "Transferred", value: monitor.segments.count > 0 ? monitor.segments.totalBytesText : "—")
                 StatCell(title: "Throughput",
                          value: monitor.segments.averageBitrateMbps.map { String(format: "%.1f Mbps", $0) } ?? "—")
-            }
-            if let last = monitor.segments.lastSegmentName {
-                Text("Last: \(last)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
             }
         }
         .padding()
