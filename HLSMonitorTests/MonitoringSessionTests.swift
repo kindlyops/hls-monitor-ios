@@ -143,4 +143,81 @@ struct MonitoringSessionTests {
         let bad = session(start: Date(), minutes: 10, failures: 6)
         #expect(QualityReportHTML.page(for: bad).contains("POOR"))
     }
+
+    // MARK: - Timeline
+
+    @Test func consolidationMergesEventsAndSpans() {
+        let base = Date(timeIntervalSince1970: 3_000_000)
+        var first = session(start: base, minutes: 10)
+        first.qualityEvents = [QualityEvent(date: base.addingTimeInterval(60), kind: .failure)]
+        var second = session(start: base.addingTimeInterval(3_600), minutes: 10)
+        second.qualityEvents = [QualityEvent(date: base.addingTimeInterval(3_700), kind: .stall)]
+        let merged = MonitoringSession.consolidate([first, second])
+        #expect(merged?.events.count == 2)
+        #expect(merged?.events.first?.kind == .failure)
+        #expect(merged?.spans.count == 2)
+        #expect(merged?.spans.first?.start == base)
+    }
+
+    @Test func unconsolidatedSpanCoversWholeSession() {
+        let one = session(start: Date(timeIntervalSince1970: 5_000), minutes: 10)
+        #expect(one.spans.count == 1)
+        #expect(one.spans[0].start == one.startDate)
+        #expect(one.spans[0].end == one.endDate)
+    }
+
+    @Test func timelineDrawsTicksAndClusterCounts() {
+        let base = Date(timeIntervalSince1970: 4_000_000)
+        var one = session(start: base, minutes: 60)
+        // Three failures clustered within one bucket, one lone switch far away.
+        one.qualityEvents = [
+            QualityEvent(date: base.addingTimeInterval(600), kind: .failure),
+            QualityEvent(date: base.addingTimeInterval(605), kind: .failure),
+            QualityEvent(date: base.addingTimeInterval(610), kind: .failure),
+            QualityEvent(date: base.addingTimeInterval(3_000), kind: .qualitySwitch),
+        ]
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        let svg = QualityReportHTML.timelineSVG(for: one, timeFormatter: formatter)
+        // Cluster of 3 draws its count label in the failure color.
+        #expect(svg.contains(">3</text>"))
+        #expect(svg.contains("#a33d2f"))
+        // The lone switch tick appears in teal with no count label.
+        #expect(svg.contains("#235a68"))
+        #expect(!svg.contains(">1</text>"))
+    }
+
+    @Test func timelineClusterColorTakesMostSevereKind() {
+        let base = Date(timeIntervalSince1970: 6_000_000)
+        var one = session(start: base, minutes: 60)
+        // A stall and a failure land in the same bucket: tick must be red.
+        one.qualityEvents = [
+            QualityEvent(date: base.addingTimeInterval(1_000), kind: .stall),
+            QualityEvent(date: base.addingTimeInterval(1_001), kind: .failure),
+        ]
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        let svg = QualityReportHTML.timelineSVG(for: one, timeFormatter: formatter)
+        #expect(svg.contains("#a33d2f"))
+        #expect(!svg.contains("#b3953d"))
+    }
+
+    @Test func reportWithNoEventsSaysSo() {
+        let quiet = session(start: Date(), minutes: 10)
+        let html = QualityReportHTML.page(for: quiet)
+        #expect(html.contains("No quality events were observed"))
+    }
+
+    @Test func oldStoreEntriesWithoutEventsStillDecode() throws {
+        // Sessions persisted before qualityEvents/spansOverride existed must
+        // load; the new fields are optional.
+        var legacy = session(start: Date(), minutes: 5)
+        legacy.qualityEvents = nil
+        legacy.spansOverride = nil
+        let data = try JSONEncoder().encode([legacy])
+        let decoded = try JSONDecoder().decode([MonitoringSession].self, from: data)
+        #expect(decoded.count == 1)
+        #expect(decoded[0].events.isEmpty)
+        #expect(decoded[0].spans.count == 1)
+    }
 }
