@@ -12,7 +12,6 @@ struct ContentView: View {
     @StateObject private var browser: BrowserViewModel
     @FocusState private var urlFieldFocused: Bool
     @State private var isBrowserExpanded = false
-    @State private var interfaceIsLandscape: Bool = false
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -22,46 +21,32 @@ struct ContentView: View {
     }
 
     var body: some View {
-        // Layout uses only flexible frames (maxWidth/maxHeight) so it can never
-        // collapse to a zero-sized frame on the first pass and show a black
-        // launch screen. Orientation is tracked as a simple boolean driven by
-        // the interface orientation rather than a GeometryReader wrapping an
-        // explicit width/height frame.
-        content
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .animation(.easeInOut(duration: 0.25), value: isBrowserExpanded)
-            .animation(.easeInOut(duration: 0.3), value: interfaceIsLandscape)
-            .ignoresSafeArea(.keyboard)
-            .onAppear { interfaceIsLandscape = ContentView.currentInterfaceIsLandscape() }
-            .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
-                interfaceIsLandscape = ContentView.currentInterfaceIsLandscape()
-            }
-            .onChange(of: scenePhase) { _, newPhase in
-                // Returning to the foreground (e.g. after the phone was unlocked)
-                // can leave the web view's video stalled. Re-prime playback.
-                if newPhase == .active {
-                    interfaceIsLandscape = ContentView.currentInterfaceIsLandscape()
-                    browser.recoverPlaybackAfterForeground()
+        // Orientation is derived from the actual layout size via GeometryReader.
+        // This is the reliable, self-filling approach: the reader always reports
+        // the real window size on the first pass, so the UI appears immediately
+        // on launch in whichever orientation the device is in.
+        GeometryReader { proxy in
+            let isLandscape = proxy.size.width > proxy.size.height
+
+            Group {
+                if isLandscape {
+                    landscapeLayout
+                } else {
+                    portraitLayout
                 }
             }
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        if interfaceIsLandscape {
-            landscapeLayout
-        } else {
-            portraitLayout
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .animation(.easeInOut(duration: 0.25), value: isBrowserExpanded)
         }
-    }
-
-    /// Reads the live interface orientation from the active window scene.
-    private static func currentInterfaceIsLandscape() -> Bool {
-        let scene = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }
-            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
-        return scene?.interfaceOrientation.isLandscape ?? false
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .ignoresSafeArea(.keyboard)
+        .onChange(of: scenePhase) { _, newPhase in
+            // Returning to the foreground (e.g. after the phone was unlocked)
+            // can leave the web view's video stalled. Re-prime playback.
+            if newPhase == .active {
+                browser.recoverPlaybackAfterForeground()
+            }
+        }
     }
 
     private var browserSection: some View {
