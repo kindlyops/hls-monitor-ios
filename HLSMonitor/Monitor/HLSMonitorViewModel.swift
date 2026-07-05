@@ -34,6 +34,14 @@ final class HLSMonitorViewModel: ObservableObject {
         log(.info, "Monitoring reset", detail: "New page loaded")
     }
 
+    /// Target segment duration of the most recently refreshed media playlist,
+    /// used to relate download times to real-time playback on the chart.
+    var mediaTargetDuration: Double? {
+        streams.filter { !$0.isMaster }
+            .max { $0.lastUpdated < $1.lastUpdated }?
+            .targetDuration
+    }
+
     var activeVariant: HLSVariant? {
         guard let height = playback?.height, height > 0 else { return nil }
         let allVariants = streams.flatMap { $0.variants }
@@ -131,19 +139,35 @@ final class HLSMonitorViewModel: ObservableObject {
         segments.count += 1
         segments.totalBytes += max(bytes, 0)
         segments.lastSegmentName = shortName(urlString)
-        segments.lastSegmentDate = Date()
+
+        // A long silence between downloads is a stall the per-sample chart
+        // can't show on its own — mark it so it doesn't pass unnoticed.
+        let now = Date()
+        if let previous = segments.lastSegmentDate {
+            let gap = now.timeIntervalSince(previous)
+            let gapThreshold = max(2 * (mediaTargetDuration ?? 6), 8)
+            if gap > gapThreshold {
+                appendEventMarker(.downloadGap(gap))
+                log(.error, "Download gap", detail: String(format: "%.0f s without a segment", gap))
+            }
+        }
+        segments.lastSegmentDate = now
 
         // Record a sample for the download-time graph (keep a rolling window).
         if durationMs > 0 {
-            segments.recentSamples.append(SegmentSample(downloadMs: durationMs, bytes: max(bytes, 0), date: Date()))
+            segments.recentSamples.append(SegmentSample(downloadMs: durationMs, bytes: max(bytes, 0), date: now))
             if segments.recentSamples.count > 30 {
                 segments.recentSamples.removeFirst()
-                // Shift failure markers left to stay aligned with the trimmed window,
+                // Shift markers left to stay aligned with the trimmed window,
                 // dropping any that scroll off the left edge.
                 for index in segments.recentFailureMarkers.indices {
                     segments.recentFailureMarkers[index].sampleIndex -= 1
                 }
                 segments.recentFailureMarkers.removeAll { $0.sampleIndex < 0 }
+                for index in segments.recentEventMarkers.indices {
+                    segments.recentEventMarkers[index].sampleIndex -= 1
+                }
+                segments.recentEventMarkers.removeAll { $0.sampleIndex < 0 }
             }
         }
 
@@ -192,6 +216,10 @@ final class HLSMonitorViewModel: ObservableObject {
             log(.info, "Video player detected", detail: detail.isEmpty ? "Watching for HLS traffic" : shortName(detail))
         case "qualityChange":
             guard detail != lastQuality else { return }
+            // The first report is the starting rendition, not a switch.
+            if !lastQuality.isEmpty {
+                appendEventMarker(.qualityChange(detail))
+            }
             lastQuality = detail
             log(.quality, "Rendition changed", detail: detail)
         case "error":
@@ -220,6 +248,15 @@ final class HLSMonitorViewModel: ObservableObject {
     }
 
     // MARK: - Helpers
+
+    private func appendEventMarker(_ kind: SegmentEventMarker.Kind) {
+        segments.recentEventMarkers.append(
+            SegmentEventMarker(sampleIndex: segments.recentSamples.count, date: Date(), kind: kind)
+        )
+        if segments.recentEventMarkers.count > 30 {
+            segments.recentEventMarkers.removeFirst()
+        }
+    }
 
     private func log(_ kind: MonitorEventKind, _ title: String, detail: String = "") {
         events.append(MonitorEvent(kind: kind, title: title, detail: detail))

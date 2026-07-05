@@ -221,7 +221,17 @@ struct DownloadChartCard: View {
     var body: some View {
         let samples = monitor.segments.recentSamples
         let failures = monitor.segments.recentFailureMarkers
-        let peak = max(samples.map(\.downloadMs).max() ?? 1, 1)
+        let markers = monitor.segments.recentEventMarkers
+        let thresholdMs = monitor.mediaTargetDuration.map { $0 * 1000 }
+        // Anchor the scale to the real-time threshold when known so the chart
+        // doesn't rescale (and change meaning) as peaks scroll off the window.
+        let peak = max(samples.map(\.downloadMs).max() ?? 1, (thresholdMs ?? 0) * 1.15, 1)
+        let qualitySwitches = markers.filter {
+            if case .qualityChange = $0.kind { return true } else { return false }
+        }
+        let gaps = markers.filter {
+            if case .downloadGap = $0.kind { return true } else { return false }
+        }
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Label("Segment Download Time", systemImage: "waveform.path.ecg")
@@ -237,7 +247,12 @@ struct DownloadChartCard: View {
             GeometryReader { geo in
                 LineChart(
                     values: samples.map(\.downloadMs),
+                    byteSizes: samples.map(\.bytes),
                     failureIndices: failures.map(\.sampleIndex),
+                    qualitySwitchIndices: qualitySwitches.map(\.sampleIndex),
+                    gapIndices: gaps.map(\.sampleIndex),
+                    thresholdMs: thresholdMs,
+                    thresholdLabel: monitor.mediaTargetDuration.map { String(format: "%.3gs", $0) },
                     peak: peak,
                     size: geo.size
                 )
@@ -251,14 +266,15 @@ struct DownloadChartCard: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
-                HStack(spacing: 4) {
-                    Rectangle()
-                        .fill(failures.isEmpty ? Color(.systemGray3) : Color.red)
-                        .frame(width: 2, height: 10)
-                    Text(failures.isEmpty ? "no failures" : "\(monitor.segments.failureCount) failed")
-                        .font(.caption2)
-                        .foregroundStyle(failures.isEmpty ? .secondary : Color.red)
+                if !gaps.isEmpty {
+                    ChartLegendTick(color: .orange, text: "\(gaps.count) gaps")
                 }
+                if !qualitySwitches.isEmpty {
+                    ChartLegendTick(color: .purple, text: "\(qualitySwitches.count) switches")
+                }
+                ChartLegendTick(color: failures.isEmpty ? Color(.systemGray3) : .red,
+                                text: failures.isEmpty ? "no failures" : "\(monitor.segments.failureCount) failed",
+                                textColor: failures.isEmpty ? nil : .red)
             }
         }
         .padding(12)
@@ -266,14 +282,38 @@ struct DownloadChartCard: View {
     }
 }
 
-/// Average / Peak / Failed download metrics for the recent segment window.
+/// Tiny tick-plus-count legend entry under the download chart.
+private struct ChartLegendTick: View {
+    let color: Color
+    let text: String
+    var textColor: Color?
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Rectangle()
+                .fill(color)
+                .frame(width: 2, height: 10)
+            Text(text)
+                .font(.caption2)
+                .foregroundStyle(textColor ?? .secondary)
+        }
+    }
+}
+
+/// Median / p95 / Peak / Failed download metrics for the recent segment window.
 struct DownloadMetricsRow: View {
     @ObservedObject var monitor: HLSMonitorViewModel
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-            StatCard(title: "Average", value: monitor.segments.averageDownloadMs.map { String(format: "%.0f ms", $0) } ?? "—")
-            StatCard(title: "Peak", value: monitor.segments.peakDownloadMs.map { String(format: "%.0f ms", $0) } ?? "—",
+        let columns = Array(repeating: GridItem(.flexible()), count: 4)
+        LazyVGrid(columns: columns, spacing: 12) {
+            StatCard(title: "Median",
+                     value: monitor.segments.downloadPercentileMs(0.5).map { String(format: "%.0f ms", $0) } ?? "—")
+            StatCard(title: "p95",
+                     value: monitor.segments.downloadPercentileMs(0.95).map { String(format: "%.0f ms", $0) } ?? "—",
+                     color: (monitor.segments.downloadPercentileMs(0.95) ?? 0) > 2000 ? .orange : .primary)
+            StatCard(title: "Peak",
+                     value: monitor.segments.peakDownloadMs.map { String(format: "%.0f ms", $0) } ?? "—",
                      color: (monitor.segments.peakDownloadMs ?? 0) > 2000 ? .orange : .primary)
             StatCard(title: "Failed", value: "\(monitor.segments.failureCount)",
                      color: monitor.segments.failureCount > 0 ? .red : .primary)
@@ -335,7 +375,12 @@ struct BufferGauge: View {
 /// Smooth line chart with a soft area fill and endpoint dot for download times.
 struct LineChart: View {
     let values: [Double]
+    var byteSizes: [Int] = []
     var failureIndices: [Int] = []
+    var qualitySwitchIndices: [Int] = []
+    var gapIndices: [Int] = []
+    var thresholdMs: Double?
+    var thresholdLabel: String?
     let peak: Double
     let size: CGSize
 
@@ -348,8 +393,39 @@ struct LineChart: View {
             }
             .stroke(Color(.systemGray4).opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
 
+            // Real-time line: a segment plotted above it took longer to
+            // download than it takes to play, so the player is falling behind.
+            if let thresholdY {
+                Path { path in
+                    path.move(to: CGPoint(x: 0, y: thresholdY))
+                    path.addLine(to: CGPoint(x: size.width, y: thresholdY))
+                }
+                .stroke(Color.red.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                if let thresholdLabel {
+                    Text(thresholdLabel)
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundStyle(Color.red.opacity(0.7))
+                        .position(x: size.width - 10, y: thresholdY - 7)
+                }
+            }
+
+            // Download gaps (silence between segments) and rendition switches,
+            // drawn behind the line like the failure marks.
+            ForEach(xPositions(for: gapIndices), id: \.self) { x in
+                Rectangle()
+                    .fill(Color.orange.opacity(0.7))
+                    .frame(width: 2, height: size.height)
+                    .position(x: x, y: size.height / 2)
+            }
+            ForEach(xPositions(for: qualitySwitchIndices), id: \.self) { x in
+                Rectangle()
+                    .fill(Color.purple.opacity(0.6))
+                    .frame(width: 1.5, height: size.height)
+                    .position(x: x, y: size.height / 2)
+            }
+
             // Vertical marks for failed segment downloads (drawn behind the line).
-            ForEach(failureXPositions, id: \.self) { x in
+            ForEach(xPositions(for: failureIndices), id: \.self) { x in
                 ZStack {
                     Rectangle()
                         .fill(Color.red.opacity(0.85))
@@ -382,6 +458,21 @@ struct LineChart: View {
                         style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
                     )
 
+                // Per-sample dots sized by segment bytes: separates "network
+                // got slow" (same-size dots, higher line) from "segments got
+                // bigger" (bigger dots, higher line — e.g. an ABR step-up).
+                if let maxBytes = byteSizes.max(), maxBytes > 0 {
+                    ForEach(Array(points.enumerated()), id: \.offset) { index, point in
+                        let bytes = index < byteSizes.count ? byteSizes[index] : 0
+                        // sqrt so perceived dot area tracks the byte count.
+                        let radius = 1.2 + 2.2 * sqrt(Double(bytes) / Double(maxBytes))
+                        Circle()
+                            .fill(Color.accentColor)
+                            .frame(width: radius * 2, height: radius * 2)
+                            .position(point)
+                    }
+                }
+
                 // Endpoint marker
                 if let last = points.last {
                     Circle()
@@ -399,12 +490,20 @@ struct LineChart: View {
         }
     }
 
-    /// X positions for failure marks, mapped onto the same horizontal scale as the samples.
-    private var failureXPositions: [CGFloat] {
+    /// Y position of the real-time threshold, using the same scale as the samples.
+    private var thresholdY: CGFloat? {
+        guard let thresholdMs, thresholdMs > 0, peak > 0 else { return nil }
+        let topInset: CGFloat = 6
+        let usableHeight = max(size.height - topInset, 1)
+        return topInset + (1 - CGFloat(thresholdMs / peak)) * usableHeight
+    }
+
+    /// X positions for event marks, mapped onto the same horizontal scale as the samples.
+    private func xPositions(for indices: [Int]) -> [CGFloat] {
         guard size.width > 0 else { return [] }
         let count = values.count
         let stepX = count > 1 ? size.width / CGFloat(count - 1) : 0
-        return failureIndices.map { rawIndex in
+        return indices.map { rawIndex in
             let clamped = max(0, min(rawIndex, max(count - 1, 0)))
             if count <= 1 { return size.width / 2 }
             return CGFloat(clamped) * stepX

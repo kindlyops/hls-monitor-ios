@@ -106,6 +106,21 @@ struct SegmentFailureMarker: Identifiable {
     let reason: String
 }
 
+/// A notable moment on the successful-sample timeline — a rendition switch or
+/// a silent gap between downloads — drawn as a vertical tick on the chart.
+struct SegmentEventMarker: Identifiable {
+    enum Kind {
+        case qualityChange(String)
+        case downloadGap(TimeInterval)
+    }
+
+    let id = UUID()
+    /// Number of successful samples recorded before this event happened.
+    var sampleIndex: Int
+    let date: Date
+    let kind: Kind
+}
+
 struct SegmentTracker {
     var count: Int = 0
     var totalBytes: Int = 0
@@ -130,6 +145,9 @@ struct SegmentTracker {
     /// failure so it can be mapped onto the rolling window.
     var recentFailureMarkers: [SegmentFailureMarker] = []
 
+    /// Rendition switches and download gaps on the same sample timeline.
+    var recentEventMarkers: [SegmentEventMarker] = []
+
     var totalBytesText: String {
         let mb = Double(totalBytes) / 1_048_576
         return mb >= 1 ? String(format: "%.1f MB", mb) : String(format: "%.0f KB", Double(totalBytes) / 1024)
@@ -139,9 +157,17 @@ struct SegmentTracker {
         recentSamples.last?.downloadMs
     }
 
-    var averageDownloadMs: Double? {
+    /// Linearly interpolated percentile of the recent download times.
+    /// Download times are heavy-tailed, so percentiles (median for "typical",
+    /// p95 for the tail) describe them better than a mean, which lets a few
+    /// slow segments hide behind many fast ones.
+    func downloadPercentileMs(_ percentile: Double) -> Double? {
         guard !recentSamples.isEmpty else { return nil }
-        return recentSamples.map(\.downloadMs).reduce(0, +) / Double(recentSamples.count)
+        let sorted = recentSamples.map(\.downloadMs).sorted()
+        let rank = percentile * Double(sorted.count - 1)
+        let lower = Int(rank.rounded(.down))
+        let upper = Int(rank.rounded(.up))
+        return sorted[lower] + (sorted[upper] - sorted[lower]) * (rank - Double(lower))
     }
 
     var peakDownloadMs: Double? {
