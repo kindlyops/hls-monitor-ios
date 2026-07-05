@@ -12,6 +12,7 @@ struct ContentView: View {
     @StateObject private var browser: BrowserViewModel
     @FocusState private var urlFieldFocused: Bool
     @State private var isBrowserExpanded = false
+    @State private var showQualityReport = false
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -58,6 +59,14 @@ struct ContentView: View {
             if newPhase == .active {
                 browser.recoverPlaybackAfterForeground()
             }
+            // Backgrounding ends the monitoring session so it becomes
+            // reportable even if the app is later killed.
+            if newPhase == .background {
+                monitor.finalizeSession()
+            }
+        }
+        .sheet(isPresented: $showQualityReport) {
+            QualityReportSheet(monitor: monitor)
         }
     }
 
@@ -250,6 +259,12 @@ struct ContentView: View {
 
             Button(action: browser.reload) {
                 Image(systemName: "arrow.clockwise")
+            }
+
+            Button {
+                showQualityReport = true
+            } label: {
+                Image(systemName: "chart.bar.doc.horizontal")
             }
 
             Menu {

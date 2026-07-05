@@ -11,13 +11,6 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		1BC0FFEE000000000000000C /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 184F59042E6ACF1E00FBE038 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 1BC0FFEE0000000000000004;
-			remoteInfo = LoudnessBroadcast;
-		};
 		184F591A2E6ACF2000FBE038 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 184F59042E6ACF1E00FBE038 /* Project object */;
@@ -32,14 +25,14 @@
 			remoteGlobalIDString = 184F590B2E6ACF1E00FBE038;
 			remoteInfo = HLSMonitor;
 		};
+		1BC0FFEE000000000000000C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 184F59042E6ACF1E00FBE038 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1BC0FFEE0000000000000004;
+			remoteInfo = LoudnessBroadcast;
+		};
 /* End PBXContainerItemProxy section */
-
-/* Begin PBXFileReference section */
-		184F590C2E6ACF1E00FBE038 /* HLSMonitor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HLSMonitor.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		184F59192E6ACF2000FBE038 /* HLSMonitorTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HLSMonitorTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		184F59232E6ACF2000FBE038 /* HLSMonitorUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HLSMonitorUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		1BC0FFEE0000000000000001 /* LoudnessBroadcast.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LoudnessBroadcast.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-/* End PBXFileReference section */
 
 /* Begin PBXCopyFilesBuildPhase section */
 		1BC0FFEE0000000000000002 /* Embed Foundation Extensions */ = {
@@ -54,6 +47,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		184F590C2E6ACF1E00FBE038 /* HLSMonitor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HLSMonitor.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		184F59192E6ACF2000FBE038 /* HLSMonitorTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HLSMonitorTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		184F59232E6ACF2000FBE038 /* HLSMonitorUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HLSMonitorUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		1BC0FFEE0000000000000001 /* LoudnessBroadcast.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LoudnessBroadcast.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		187AF0F92E828D1000505E98 /* Exceptions for "HLSMonitor" folder in "HLSMonitor" target */ = {
@@ -89,14 +89,6 @@
 			path = HLSMonitor;
 			sourceTree = "<group>";
 		};
-		1BC0FFEE000000000000000B /* LoudnessBroadcast */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				1BC0FFEE000000000000000F /* Exceptions for "LoudnessBroadcast" folder in "LoudnessBroadcast" target */,
-			);
-			path = LoudnessBroadcast;
-			sourceTree = "<group>";
-		};
 		184F591C2E6ACF2000FBE038 /* HLSMonitorTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = HLSMonitorTests;
@@ -105,6 +97,14 @@
 		184F59262E6ACF2000FBE038 /* HLSMonitorUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = HLSMonitorUITests;
+			sourceTree = "<group>";
+		};
+		1BC0FFEE000000000000000B /* LoudnessBroadcast */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				1BC0FFEE000000000000000F /* Exceptions for "LoudnessBroadcast" folder in "LoudnessBroadcast" target */,
+			);
+			path = LoudnessBroadcast;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */

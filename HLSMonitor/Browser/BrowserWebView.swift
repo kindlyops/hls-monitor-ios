@@ -154,6 +154,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         }
 
         monitor.reset()
+        monitor.sessionStreamURL = text
         hasContent = true
         if url.path.lowercased().hasSuffix(".m3u8") {
             loadInlinePlayer(for: url)
