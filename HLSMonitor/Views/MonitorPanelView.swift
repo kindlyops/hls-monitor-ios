@@ -117,20 +117,18 @@ private struct LivePulseHeader: View {
                 HStack(spacing: 6) {
                     Text(statusText)
                         .font(.subheadline.weight(.semibold))
-                    if monitor.segments.failureCount > 0 {
-                        HStack(spacing: 3) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.caption2)
-                            Text("\(monitor.segments.failureCount) failed")
-                                .font(.caption2.weight(.semibold))
-                                .contentTransition(.numericText())
-                        }
-                        .foregroundStyle(Color.red)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.red.opacity(0.15), in: Capsule())
-                        .transition(.opacity.combined(with: .scale))
+                    let hasFailures = monitor.segments.failureCount > 0
+                    HStack(spacing: 3) {
+                        Image(systemName: hasFailures ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                            .font(.caption2)
+                        Text("\(monitor.segments.failureCount) failed")
+                            .font(.caption2.weight(.semibold))
+                            .contentTransition(.numericText())
                     }
+                    .foregroundStyle(hasFailures ? Color.red : Color.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background((hasFailures ? Color.red : Color(.systemGray3)).opacity(0.15), in: Capsule())
                 }
                 Text(monitor.segments.lastSegmentName ?? "Waiting for segments…")
                     .font(.caption2.monospaced())
