@@ -114,8 +114,24 @@ private struct LivePulseHeader: View {
             .frame(width: 30, height: 30)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(statusText)
-                    .font(.subheadline.weight(.semibold))
+                HStack(spacing: 6) {
+                    Text(statusText)
+                        .font(.subheadline.weight(.semibold))
+                    if monitor.segments.failureCount > 0 {
+                        HStack(spacing: 3) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.caption2)
+                            Text("\(monitor.segments.failureCount) failed")
+                                .font(.caption2.weight(.semibold))
+                                .contentTransition(.numericText())
+                        }
+                        .foregroundStyle(Color.red)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.red.opacity(0.15), in: Capsule())
+                        .transition(.opacity.combined(with: .scale))
+                    }
+                }
                 Text(monitor.segments.lastSegmentName ?? "Waiting for segments…")
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
@@ -137,6 +153,7 @@ private struct LivePulseHeader: View {
         .padding(12)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
         .onReceive(ticker) { now = $0 }
+        .animation(.snappy(duration: 0.3), value: monitor.segments.failureCount)
         .onChange(of: monitor.segments.count) {
             withAnimation(.easeOut(duration: 0.55)) { pulse = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
