@@ -22,36 +22,35 @@ struct ContentView: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            // Determine orientation from the geometry when it is valid, otherwise
-            // fall back to the live interface orientation. On the very first
-            // launch SwiftUI can briefly report portrait-sized geometry before the
-            // scene finishes rotating, so the fallback keeps the layout correct.
-            let hasValidGeometry = geometry.size.width > 0 && geometry.size.height > 0
-            let isLandscape = hasValidGeometry
-                ? geometry.size.width > geometry.size.height
-                : interfaceIsLandscape
+        // The root ZStack fills the window naturally (no explicit frame that can
+        // collapse to zero on the first layout pass and cause a black screen).
+        // GeometryReader is used only to decide orientation and split proportions.
+        ZStack {
+            Color(.systemGroupedBackground)
+                .ignoresSafeArea()
 
-            // Guarantee a valid drawing size even during the first layout pass so
-            // the web view never gets a zero-sized frame (which renders as a
-            // persistent black screen until the next layout).
-            let width = hasValidGeometry ? geometry.size.width : UIScreen.main.bounds.width
-            let height = hasValidGeometry ? geometry.size.height : UIScreen.main.bounds.height
-            let renderSize = CGSize(width: width, height: height)
+            GeometryReader { geometry in
+                // Prefer the live geometry when it is valid; otherwise fall back to
+                // the interface orientation so the very first launch is correct even
+                // before SwiftUI reports a real size.
+                let hasValidGeometry = geometry.size.width > 0 && geometry.size.height > 0
+                let isLandscape = hasValidGeometry
+                    ? geometry.size.width > geometry.size.height
+                    : interfaceIsLandscape
 
-            ZStack {
-                Color(.systemGroupedBackground)
-                    .ignoresSafeArea()
+                let size = hasValidGeometry ? geometry.size : fallbackSize()
 
-                if isLandscape {
-                    landscapeLayout(size: renderSize)
-                } else {
-                    portraitLayout(size: renderSize)
+                Group {
+                    if isLandscape {
+                        landscapeLayout(size: size)
+                    } else {
+                        portraitLayout(size: size)
+                    }
                 }
+                .frame(width: size.width, height: size.height)
+                .animation(.easeInOut(duration: 0.25), value: isBrowserExpanded)
+                .animation(.easeInOut(duration: 0.3), value: isLandscape)
             }
-            .frame(width: width, height: height)
-            .animation(.easeInOut(duration: 0.25), value: isBrowserExpanded)
-            .animation(.easeInOut(duration: 0.3), value: isLandscape)
         }
         .ignoresSafeArea(.keyboard)
         .onAppear { interfaceIsLandscape = ContentView.currentInterfaceIsLandscape() }
@@ -66,6 +65,19 @@ struct ContentView: View {
                 browser.recoverPlaybackAfterForeground()
             }
         }
+    }
+
+    /// A best-effort screen size for the first layout pass, read from the active
+    /// window scene (avoids the deprecated, scene-unaware `UIScreen.main`).
+    private func fallbackSize() -> CGSize {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        if let bounds = scene?.screen.bounds, bounds.width > 0, bounds.height > 0 {
+            return bounds.size
+        }
+        return CGSize(width: 390, height: 844)
     }
 
     /// Reads the live interface orientation from the active window scene.
@@ -85,7 +97,34 @@ struct ContentView: View {
                     .progressViewStyle(.linear)
                     .tint(.blue)
             }
-            BrowserWebView(webView: browser.webView)
+            ZStack {
+                // A neutral backdrop so an empty web view never shows as a bare
+                // black rectangle on first launch (before any URL is loaded).
+                Color(.secondarySystemBackground)
+
+                if browser.hasContent {
+                    BrowserWebView(webView: browser.webView)
+                } else {
+                    emptyBrowserPlaceholder
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var emptyBrowserPlaceholder: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "play.rectangle.on.rectangle")
+                .font(.system(size: 42))
+                .foregroundStyle(.secondary)
+            Text("Enter a livestream URL")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            Text("Type an HLS (.m3u8) or web page URL above to start monitoring.")
+                .font(.subheadline)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
         }
     }
 

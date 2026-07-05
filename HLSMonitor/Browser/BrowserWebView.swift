@@ -32,6 +32,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
     /// The most recently saved livestream URL, if any.
     @Published private(set) var savedURL: String?
 
+    /// Whether the web view has been asked to load any content yet. Used to show
+    /// a friendly placeholder instead of a bare black web view on first launch.
+    @Published private(set) var hasContent = false
+
     let monitor: HLSMonitorViewModel
     let webView: WKWebView
 
@@ -67,6 +71,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
         webView.scrollView.isScrollEnabled = true
         webView.scrollView.alwaysBounceVertical = true
         webView.scrollView.keyboardDismissMode = .interactive
+        // Avoid an opaque black web view when there is no page content yet.
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
 
         super.init()
 
@@ -131,6 +139,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         }
 
         monitor.reset()
+        hasContent = true
         if url.path.lowercased().hasSuffix(".m3u8") {
             loadInlinePlayer(for: url)
         } else {
