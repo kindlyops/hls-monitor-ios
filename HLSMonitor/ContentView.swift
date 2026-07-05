@@ -12,7 +12,7 @@ struct ContentView: View {
     @StateObject private var browser: BrowserViewModel
     @FocusState private var urlFieldFocused: Bool
     @State private var isBrowserExpanded = false
-    @State private var interfaceIsLandscape: Bool = ContentView.currentInterfaceIsLandscape()
+    @State private var interfaceIsLandscape: Bool = false
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -27,8 +27,9 @@ struct ContentView: View {
             // portrait-sized geometry before the scene finishes rotating. Fall
             // back to the actual interface orientation until geometry settles so
             // we render the correct layout immediately.
+            let hasValidGeometry = geometry.size.width > 0 && geometry.size.height > 0
             let geometryLandscape = geometry.size.width > geometry.size.height
-            let isLandscape = geometry.size.width == geometry.size.height
+            let isLandscape = (!hasValidGeometry || geometry.size.width == geometry.size.height)
                 ? interfaceIsLandscape
                 : geometryLandscape
 
@@ -39,6 +40,7 @@ struct ContentView: View {
                     portraitLayout(geometry: geometry)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(.easeInOut(duration: 0.25), value: isBrowserExpanded)
             .animation(.easeInOut(duration: 0.3), value: isLandscape)
         }
