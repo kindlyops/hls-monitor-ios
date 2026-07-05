@@ -55,6 +55,21 @@ enum MonitorScripts {
             });
         }
 
+        // Report a failed segment download (network error or HTTP error status).
+        var seenFailures = Object.create(null);
+        function reportFailure(url, reason) {
+            var abs = absolute(url);
+            var now = performance.now();
+            var prev = seenFailures[abs];
+            if (prev && (now - prev) < 1500) { return; }
+            seenFailures[abs] = now;
+            post({
+                type: 'segmentError',
+                url: abs,
+                reason: reason || 'error'
+            });
+        }
+
         // ---- fetch interception (covers MSE players like hls.js) ----
         var origFetch = window.fetch;
         window.fetch = function(input, init) {
@@ -67,9 +82,16 @@ enum MonitorScripts {
             if (kind === 'segment') {
                 var started = performance.now();
                 return origFetch.apply(this, arguments).then(function(response) {
-                    var bytes = parseInt(response.headers.get('content-length') || '0', 10);
-                    reportSegment(url, performance.now() - started, bytes);
+                    if (!response.ok) {
+                        reportFailure(url, 'HTTP ' + response.status);
+                    } else {
+                        var bytes = parseInt(response.headers.get('content-length') || '0', 10);
+                        reportSegment(url, performance.now() - started, bytes);
+                    }
                     return response;
+                }).catch(function(err) {
+                    reportFailure(url, (err && err.message) ? err.message : 'network error');
+                    throw err;
                 });
             }
             return origFetch.apply(this, arguments);
@@ -89,6 +111,11 @@ enum MonitorScripts {
             if (kind === 'segment') {
                 var durationMs = entry.duration ||
                     (entry.responseEnd - entry.startTime) || 0;
+                // responseStatus is available in newer WebKit; treat >=400 as a failure.
+                if (typeof entry.responseStatus === 'number' && entry.responseStatus >= 400) {
+                    reportFailure(url, 'HTTP ' + entry.responseStatus);
+                    return;
+                }
                 // transferSize includes headers; encodedBodySize is the payload.
                 var bytes = entry.encodedBodySize || entry.transferSize || 0;
                 reportSegment(url, durationMs, bytes);
@@ -141,6 +168,11 @@ enum MonitorScripts {
             } else if (xhr.__hlsKind === 'segment') {
                 var started = performance.now();
                 xhr.addEventListener('loadend', function() {
+                    // status 0 means the request was aborted or failed at network level.
+                    if (xhr.status === 0 || xhr.status >= 400) {
+                        reportFailure(xhr.__hlsUrl, xhr.status === 0 ? 'network error' : 'HTTP ' + xhr.status);
+                        return;
+                    }
                     var bytes = 0;
                     try {
                         bytes = parseInt(xhr.getResponseHeader('content-length') || '0', 10);
@@ -149,6 +181,9 @@ enum MonitorScripts {
                         }
                     } catch (e) {}
                     reportSegment(xhr.__hlsUrl, performance.now() - started, bytes);
+                });
+                xhr.addEventListener('error', function() {
+                    reportFailure(xhr.__hlsUrl, 'network error');
                 });
             }
             return origSend.apply(this, arguments);

@@ -95,6 +95,17 @@ struct SegmentSample: Identifiable {
     let date: Date
 }
 
+/// A failed segment download, positioned relative to the successful sample
+/// timeline so it can be drawn as a vertical mark on the download chart.
+struct SegmentFailureMarker: Identifiable {
+    let id = UUID()
+    /// Index into the successful-sample timeline where this failure sits
+    /// (i.e. the number of successful samples recorded before it happened).
+    var sampleIndex: Int
+    let date: Date
+    let reason: String
+}
+
 struct SegmentTracker {
     var count: Int = 0
     var totalBytes: Int = 0
@@ -103,8 +114,21 @@ struct SegmentTracker {
     var lastSegmentName: String?
     var lastSegmentDate: Date?
 
+    /// Total number of segment downloads that failed.
+    var failureCount: Int = 0
+    /// Name of the most recently failed segment.
+    var lastFailureName: String?
+    /// When the last failure occurred.
+    var lastFailureDate: Date?
+
     /// Rolling window of the most recent segment download times (newest last).
     var recentSamples: [SegmentSample] = []
+
+    /// Positions (as a fraction 0...1 along the current sample timeline) where
+    /// failures occurred, used to draw vertical marks on the download chart.
+    /// Each entry stores the number of successful samples seen at the moment of
+    /// failure so it can be mapped onto the rolling window.
+    var recentFailureMarkers: [SegmentFailureMarker] = []
 
     var totalBytesText: String {
         let mb = Double(totalBytes) / 1_048_576

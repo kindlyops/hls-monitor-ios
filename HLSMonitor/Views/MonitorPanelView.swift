@@ -196,6 +196,7 @@ private struct DownloadGraphView: View {
 
     private var graphCard: some View {
         let samples = monitor.segments.recentSamples
+        let failures = monitor.segments.recentFailureMarkers
         let peak = max(samples.map(\.downloadMs).max() ?? 1, 1)
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -212,16 +213,31 @@ private struct DownloadGraphView: View {
             GeometryReader { geo in
                 LineChart(
                     values: samples.map(\.downloadMs),
+                    failureIndices: failures.map(\.sampleIndex),
                     peak: peak,
                     size: geo.size
                 )
                 .animation(.easeOut(duration: 0.3), value: samples.count)
+                .animation(.easeOut(duration: 0.3), value: failures.count)
             }
             .frame(height: 120)
 
-            Text(String(format: "Peak %.0f ms · %d recent segments", peak, samples.count))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Text(String(format: "Peak %.0f ms · %d recent segments", peak, samples.count))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if !failures.isEmpty {
+                    Spacer(minLength: 0)
+                    HStack(spacing: 4) {
+                        Rectangle()
+                            .fill(Color.red)
+                            .frame(width: 2, height: 10)
+                        Text("failed")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
         }
         .padding()
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
@@ -229,10 +245,11 @@ private struct DownloadGraphView: View {
 
     private var metricsRow: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-            StatCard(title: "Last", value: monitor.segments.lastDownloadMs.map { String(format: "%.0f ms", $0) } ?? "—")
             StatCard(title: "Average", value: monitor.segments.averageDownloadMs.map { String(format: "%.0f ms", $0) } ?? "—")
             StatCard(title: "Peak", value: monitor.segments.peakDownloadMs.map { String(format: "%.0f ms", $0) } ?? "—",
                      color: (monitor.segments.peakDownloadMs ?? 0) > 2000 ? .orange : .primary)
+            StatCard(title: "Failed", value: "\(monitor.segments.failureCount)",
+                     color: monitor.segments.failureCount > 0 ? .red : .primary)
         }
     }
 
@@ -248,6 +265,7 @@ private struct DownloadGraphView: View {
 /// Smooth line chart with a soft area fill and endpoint dot for download times.
 private struct LineChart: View {
     let values: [Double]
+    var failureIndices: [Int] = []
     let peak: Double
     let size: CGSize
 
@@ -259,6 +277,22 @@ private struct LineChart: View {
                 path.addLine(to: CGPoint(x: size.width, y: size.height))
             }
             .stroke(Color(.systemGray4).opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+
+            // Vertical marks for failed segment downloads (drawn behind the line).
+            ForEach(failureXPositions, id: \.self) { x in
+                ZStack {
+                    Rectangle()
+                        .fill(Color.red.opacity(0.85))
+                        .frame(width: 2)
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 6, height: 6)
+                        .shadow(color: Color.red.opacity(0.6), radius: 3)
+                        .position(x: 1, y: 2)
+                }
+                .frame(width: 2, height: size.height)
+                .position(x: x, y: size.height / 2)
+            }
 
             if points.count >= 2 {
                 // Soft area fill under the line
@@ -292,6 +326,18 @@ private struct LineChart: View {
                     .frame(width: 8, height: 8)
                     .position(only)
             }
+        }
+    }
+
+    /// X positions for failure marks, mapped onto the same horizontal scale as the samples.
+    private var failureXPositions: [CGFloat] {
+        guard size.width > 0 else { return [] }
+        let count = values.count
+        let stepX = count > 1 ? size.width / CGFloat(count - 1) : 0
+        return failureIndices.map { rawIndex in
+            let clamped = max(0, min(rawIndex, max(count - 1, 0)))
+            if count <= 1 { return size.width / 2 }
+            return CGFloat(clamped) * stepX
         }
     }
 

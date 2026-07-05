@@ -50,6 +50,8 @@ final class HLSMonitorViewModel: ObservableObject {
             }
         case "segment":
             handleSegment(body)
+        case "segmentError":
+            handleSegmentError(body)
         case "event":
             handlePlayerEvent(body)
         case "stats":
@@ -134,7 +136,15 @@ final class HLSMonitorViewModel: ObservableObject {
         // Record a sample for the download-time graph (keep a rolling window).
         if durationMs > 0 {
             segments.recentSamples.append(SegmentSample(downloadMs: durationMs, bytes: max(bytes, 0), date: Date()))
-            if segments.recentSamples.count > 30 { segments.recentSamples.removeFirst() }
+            if segments.recentSamples.count > 30 {
+                segments.recentSamples.removeFirst()
+                // Shift failure markers left to stay aligned with the trimmed window,
+                // dropping any that scroll off the left edge.
+                for index in segments.recentFailureMarkers.indices {
+                    segments.recentFailureMarkers[index].sampleIndex -= 1
+                }
+                segments.recentFailureMarkers.removeAll { $0.sampleIndex < 0 }
+            }
         }
 
         var detail = String(format: "%.0f ms", durationMs)
@@ -147,6 +157,30 @@ final class HLSMonitorViewModel: ObservableObject {
             detail += String(format: " · %.1f KB · %.1f Mbps", Double(bytes) / 1024, mbps)
         }
         log(.segment, "Segment \(shortName(urlString))", detail: detail)
+    }
+
+    private func handleSegmentError(_ body: [String: Any]) {
+        let urlString = body["url"] as? String ?? ""
+        let reason = body["reason"] as? String ?? "error"
+        let name = shortName(urlString)
+
+        segments.failureCount += 1
+        segments.lastFailureName = name
+        segments.lastFailureDate = Date()
+
+        // Anchor the failure marker to the current position in the sample window
+        // so it renders as a vertical line at the point in time it happened.
+        let marker = SegmentFailureMarker(
+            sampleIndex: segments.recentSamples.count,
+            date: Date(),
+            reason: reason
+        )
+        segments.recentFailureMarkers.append(marker)
+        if segments.recentFailureMarkers.count > 30 {
+            segments.recentFailureMarkers.removeFirst()
+        }
+
+        log(.error, "Segment failed \(name)", detail: reason)
     }
 
     private func handlePlayerEvent(_ body: [String: Any]) {
