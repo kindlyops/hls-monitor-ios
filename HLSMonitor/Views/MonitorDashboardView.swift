@@ -21,12 +21,17 @@ struct MonitorDashboardView: View {
                 LivePulseHeader(monitor: monitor)
 
                 if columns >= 2 {
-                    LazyVGrid(
-                        columns: Array(repeating: GridItem(.flexible(), spacing: 12, alignment: .top), count: 2),
-                        alignment: .leading,
-                        spacing: 12
-                    ) {
-                        cards
+                    // Streams gets its own column: its card grows much taller
+                    // than the others (playlist URLs plus a row per variant),
+                    // and in a row-paired grid that height would stretch
+                    // whichever compact card shared its row.
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(spacing: 12) {
+                            compactCards
+                        }
+                        VStack(spacing: 12) {
+                            StreamsCard(monitor: monitor)
+                        }
                     }
                 } else {
                     cards
@@ -37,14 +42,27 @@ struct MonitorDashboardView: View {
         .background(Color("PaperBackground"))
     }
 
+    /// Single-column order: Streams ahead of the long Events feed so it
+    /// isn't buried beneath 30 event rows.
     @ViewBuilder
     private var cards: some View {
         PlaybackCard(monitor: monitor)
         DownloadChartCard(monitor: monitor)
-        SegmentsCard(monitor: monitor)
         DownloadMetricsRow(monitor: monitor)
+        SegmentsCard(monitor: monitor)
         LoudnessCard(monitor: monitor)
         StreamsCard(monitor: monitor)
+        EventsCard(monitor: monitor)
+    }
+
+    /// Everything except Streams, for the left column of the two-column grid.
+    @ViewBuilder
+    private var compactCards: some View {
+        PlaybackCard(monitor: monitor)
+        DownloadChartCard(monitor: monitor)
+        DownloadMetricsRow(monitor: monitor)
+        SegmentsCard(monitor: monitor)
+        LoudnessCard(monitor: monitor)
         EventsCard(monitor: monitor)
     }
 }
