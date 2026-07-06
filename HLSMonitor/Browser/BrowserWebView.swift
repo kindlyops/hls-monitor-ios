@@ -272,6 +272,36 @@ final class BrowserViewModel: NSObject, ObservableObject {
                         window.__hlsMonitorAudioChunk(data.data);
                     }
                 });
+                // Paused with a comfortable buffer means every further byte
+                // is wasted: stop fetching (segments and live playlist
+                // refreshes) and pick up where we left off on play. While
+                // paused under 30s buffered, BUFFER_APPENDED keeps firing
+                // until the threshold is reached.
+                var pausedLoadStopped = false;
+                function bufferedAheadSeconds() {
+                    var t = video.currentTime;
+                    for (var i = 0; i < video.buffered.length; i++) {
+                        if (video.buffered.start(i) <= t && t <= video.buffered.end(i)) {
+                            return video.buffered.end(i) - t;
+                        }
+                    }
+                    return 0;
+                }
+                function updateLoadControl() {
+                    if (fellBack) { return; }
+                    if (video.paused && !video.ended) {
+                        if (!pausedLoadStopped && bufferedAheadSeconds() >= 30) {
+                            pausedLoadStopped = true;
+                            hls.stopLoad();
+                        }
+                    } else if (pausedLoadStopped) {
+                        pausedLoadStopped = false;
+                        hls.startLoad();
+                    }
+                }
+                video.addEventListener('pause', updateLoadControl);
+                video.addEventListener('play', updateLoadControl);
+                hls.on(Hls.Events.BUFFER_APPENDED, updateLoadControl);
                 hls.loadSource(src);
                 hls.attachMedia(video);
             } else {

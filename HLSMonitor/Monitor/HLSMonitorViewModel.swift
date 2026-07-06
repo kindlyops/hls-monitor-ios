@@ -32,6 +32,9 @@ final class HLSMonitorViewModel: ObservableObject {
     /// The URL being monitored, set by the browser when a page/stream loads.
     var sessionStreamURL: String?
     private var sessionStart: Date?
+    /// Most recent time the player reported itself paused. Used to tell
+    /// deliberate pauses apart from delivery problems in the gap detector.
+    private var lastPausedDate: Date?
     private var sessionDownloadTimes: [Double] = []
     private var sessionStallCount = 0
     private var sessionStallSeconds: Double = 0
@@ -70,6 +73,7 @@ final class HLSMonitorViewModel: ObservableObject {
         recentBitrates.removeAll()
         lastQuality = ""
         sessionStart = nil
+        lastPausedDate = nil
         sessionDownloadTimes.removeAll()
         sessionStallCount = 0
         sessionStallSeconds = 0
@@ -239,7 +243,12 @@ final class HLSMonitorViewModel: ObservableObject {
         if let previous = segments.lastSegmentDate {
             let gap = now.timeIntervalSince(previous)
             let gapThreshold = max(2 * (mediaTargetDuration ?? 6), 8)
-            if gap > gapThreshold {
+            // The inline player stops downloading on purpose while paused
+            // with a full buffer, so a pause inside the window means the
+            // gap wasn't a delivery problem — and a viewer who paused
+            // wasn't affected by it either way.
+            let pausedDuringGap = lastPausedDate.map { $0 > previous } ?? false
+            if gap > gapThreshold && !pausedDuringGap {
                 sessionGapCount += 1
                 recordSessionEvent(.gap)
                 appendEventMarker(.downloadGap(gap))
@@ -355,6 +364,7 @@ final class HLSMonitorViewModel: ObservableObject {
         stats.droppedFrames = (body["dropped"] as? NSNumber)?.intValue ?? 0
         stats.totalFrames = (body["totalFrames"] as? NSNumber)?.intValue ?? 0
         stats.paused = (body["paused"] as? NSNumber)?.boolValue ?? true
+        if stats.paused { lastPausedDate = Date() }
         playback = stats
     }
 
