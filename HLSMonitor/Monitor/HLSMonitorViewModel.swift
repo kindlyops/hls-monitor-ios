@@ -79,6 +79,9 @@ final class HLSMonitorViewModel: ObservableObject {
         log(.info, "Monitoring reset", detail: "New page loaded")
     }
 
+    /// When the in-progress session began; nil while nothing is recorded.
+    var sessionStartDate: Date? { sessionStart }
+
     /// Builds a session from everything recorded since the last reset, or
     /// nil when nothing was monitored.
     func snapshotSession(endingAt end: Date = Date()) -> MonitoringSession? {
@@ -229,7 +232,7 @@ final class HLSMonitorViewModel: ObservableObject {
         segments.totalBytes += max(bytes, 0)
         segments.lastSegmentName = shortName(urlString)
 
-        // A long silence between downloads is a stall the per-sample chart
+        // A long pause between downloads is a stall the per-sample chart
         // can't show on its own — mark it so it doesn't pass unnoticed.
         let now = Date()
         if sessionStart == nil { sessionStart = now }
