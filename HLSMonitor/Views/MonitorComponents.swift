@@ -563,7 +563,7 @@ struct LineChart: View {
                 }
             }
 
-            // Download gaps (silence between segments) and rendition switches,
+            // Download gaps (pauses in segment downloads) and rendition switches,
             // drawn behind the line like the failure marks.
             ForEach(xPositions(for: gapIndices), id: \.self) { x in
                 Rectangle()

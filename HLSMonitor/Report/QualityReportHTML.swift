@@ -138,8 +138,8 @@ enum QualityReportHTML {
                             : "Requests that errored or returned HTTP ≥ 400"))
           \(incidentRow("Download gaps", session.gapCount, incidentMax,
                         session.gapCount > 0 && session.stallCount == 0
-                            ? "Silence between segments — absorbed by the buffer"
-                            : "Silence over 2× target duration between segments"))
+                            ? "Pause in segment downloads — absorbed by the buffer"
+                            : "No segment downloads for over 2× the target duration"))
           \(incidentRow("Playback stalls", session.stallCount, incidentMax, stallMeaning(session)))
           \(incidentRow("Rendition switches", session.qualitySwitchCount, incidentMax,
                         "ABR changed quality level mid-play"))

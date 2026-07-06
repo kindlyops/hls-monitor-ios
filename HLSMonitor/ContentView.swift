@@ -90,6 +90,15 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Fills the letterboxed dead space under the player and keeps the
+            // report feature discoverable; hidden while the browser is
+            // expanded so maximizing the video stays true to its name.
+            if !isBrowserExpanded {
+                QualityReportButton(monitor: monitor)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+            }
         }
     }
 
