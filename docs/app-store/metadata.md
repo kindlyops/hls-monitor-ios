@@ -127,7 +127,7 @@ live stats). Previews autoplay muted in the store.
 | Age rating | Answer "unrestricted web access: YES" (the URL bar loads any page) → app gets 17+ |
 | Copyright | © 2026 Kindly Ops, LLC |
 | Support URL | https://github.com/kindlyops/hls-monitor-ios/issues |
-| Privacy policy URL | required — a page stating no data is collected |
+| Privacy policy URL | https://github.com/kindlyops/hls-monitor-ios/blob/main/PRIVACY.md |
 | App Privacy questionnaire | "Data not collected" (nothing leaves the device) |
 | Pricing | your call — not set here |
 
