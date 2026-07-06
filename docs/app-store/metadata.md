@@ -106,6 +106,15 @@ iPad 13" (2064×2752 / 2752×2064):
 2. `ipad-13-02-dashboard-landscape.png` — player + dashboard column, landscape
 3. `ipad-13-03-pdf-report.png` — the generated PDF quality report page
 
+## App preview (`docs/app-store/previews/`)
+
+`iphone-65-preview.mp4` — 886×1920, 29.4s, 30fps H.264 with silent stereo
+AAC (within Apple's 15–30s limit). Storyboard: load the Unified Streaming
+test stream → live playback/segment stats → download-time chart →
+rendition list → generate and share the PDF quality report. Upload to the
+iPhone preview slot; pick a poster frame around the 6s mark (SMPTE bars +
+live stats). Previews autoplay muted in the store.
+
 ## Categories
 
 - Primary: Developer Tools
