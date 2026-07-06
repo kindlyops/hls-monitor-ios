@@ -99,10 +99,12 @@ iPhone 6.5" (1284×2778, the size App Store Connect asked for):
 2. `iphone-65-02-download-times.png` — segment download chart with percentiles
 3. `iphone-65-03-renditions.png` — master playlist and bitrate ladder
 4. `iphone-65-04-quality-report.png` — quality report sheet with Share PDF
+5. `iphone-65-05-pdf-report.png` — the generated PDF quality report page
 
 iPad 13" (2064×2752 / 2752×2064):
 1. `ipad-13-01-dashboard.png` — full dashboard, portrait
 2. `ipad-13-02-dashboard-landscape.png` — player + dashboard column, landscape
+3. `ipad-13-03-pdf-report.png` — the generated PDF quality report page
 
 ## Categories
 
