@@ -19,6 +19,7 @@ struct MonitorDashboardView: View {
         ScrollView {
             VStack(spacing: 12) {
                 LivePulseHeader(monitor: monitor)
+                AirPlayStatusBanner(monitor: monitor)
 
                 if columns >= 2 {
                     // Streams gets its own column: its card grows much taller

@@ -6,10 +6,23 @@
 import Foundation
 import Combine
 
+/// How monitoring works while an AirPlay session is active. The receiver
+/// fetches the stream itself, so everything shown is either measured by an
+/// on-device probe replaying the same stream, or not measurable at all.
+enum AirPlayMonitoring: Equatable {
+    /// On-device probe running; stats reflect this device's network.
+    case probing
+    /// Nothing measurable, with a user-facing reason (e.g. the CDN sends
+    /// no CORS headers, so page JavaScript can't read the stream).
+    case dark(reason: String)
+}
+
 @MainActor
 final class HLSMonitorViewModel: ObservableObject {
 
     @Published private(set) var events: [MonitorEvent] = []
+    /// Non-nil while an AirPlay session changes how monitoring works.
+    @Published private(set) var airplayMonitoring: AirPlayMonitoring?
     @Published private(set) var streams: [HLSStream] = []
     @Published private(set) var playback: PlaybackStats?
     @Published private(set) var segments = SegmentTracker()
@@ -72,6 +85,7 @@ final class HLSMonitorViewModel: ObservableObject {
         fetchingURLs.removeAll()
         recentBitrates.removeAll()
         lastQuality = ""
+        airplayMonitoring = nil
         sessionStart = nil
         lastPausedDate = nil
         sessionDownloadTimes.removeAll()
@@ -160,6 +174,8 @@ final class HLSMonitorViewModel: ObservableObject {
             handleStats(body)
         case "audio":
             handleAudio(body)
+        case "airplay":
+            handleAirPlay(body)
         default:
             break
         }
@@ -426,6 +442,43 @@ final class HLSMonitorViewModel: ObservableObject {
         levels.peakDbfs = (body["peak"] as? NSNumber)?.doubleValue
         audio = levels
         appendAudioHistory(levels.momentary)
+    }
+
+    private func handleAirPlay(_ body: [String: Any]) {
+        switch body["state"] as? String {
+        case "started":
+            let url = body["url"] as? String ?? ""
+            if url.isEmpty {
+                airplayMonitoring = .dark(reason:
+                    "The page's player didn't expose a stream URL, so nothing can be measured on this device.")
+                log(.info, "AirPlay started", detail: "No stream URL visible — monitoring dark")
+            } else {
+                airplayMonitoring = .probing
+                log(.info, "AirPlay started", detail: "Probing \(shortName(url)) from this device")
+            }
+        case "probeActive":
+            airplayMonitoring = .probing
+            log(.info, "AirPlay probe running",
+                detail: "Stats measured on this device's network, not the receiver's")
+        case "probeFailed":
+            let reason = body["reason"] as? String ?? "error"
+            let text: String
+            switch reason {
+            case "cors":
+                text = "The stream's CDN doesn't send CORS headers, so this device can't read the stream during AirPlay."
+            case "media":
+                text = "Stream segments can't be decoded on this device (DRM-protected stream?)."
+            default:
+                text = "Stream probe failed (\(reason))."
+            }
+            airplayMonitoring = .dark(reason: text)
+            log(.error, "AirPlay probe failed", detail: text)
+        case "ended":
+            airplayMonitoring = nil
+            log(.info, "AirPlay ended", detail: "Playback returned to this device")
+        default:
+            break
+        }
     }
 
     private func appendAudioHistory(_ momentary: Double?) {

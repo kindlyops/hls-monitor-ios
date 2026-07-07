@@ -94,8 +94,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
         super.init()
 
-        contentController.add(MessageProxy(handler: { [weak self] body in
-            self?.monitor.handle(body)
+        contentController.add(MessageProxy(handler: { [weak self] body, frame in
+            self?.handleMonitorMessage(body, from: frame)
         }), name: "hlsMonitor")
 
         webView.navigationDelegate = self
@@ -192,6 +192,50 @@ final class BrowserViewModel: NSObject, ObservableObject {
     func goBack() { webView.goBack() }
     func goForward() { webView.goForward() }
 
+    private func handleMonitorMessage(_ body: [String: Any], from frame: WKFrameInfo) {
+        if body["type"] as? String == "airplay" {
+            handleAirPlayChange(body, from: frame)
+        }
+        monitor.handle(body)
+    }
+
+    /// Starts/stops the on-device AirPlay monitor probe defined by the
+    /// injected monitor script. hls.js is injected here on demand because
+    /// third-party pages don't ship it and their Content-Security-Policy
+    /// would block the page adding it — native injection is CSP-exempt.
+    private func handleAirPlayChange(_ body: [String: Any], from frame: WKFrameInfo) {
+        switch body["state"] as? String {
+        case "started":
+            guard let urlString = body["url"] as? String, !urlString.isEmpty else { return }
+            let startAt = (body["startAt"] as? NSNumber)?.doubleValue ?? -1
+            startProbe(url: urlString, startAt: startAt, in: frame)
+        case "ended":
+            webView.evaluateJavaScript(
+                "if (window.__hlsMonitorStopProbe) { window.__hlsMonitorStopProbe(); }",
+                in: frame, in: .page, completionHandler: nil
+            )
+        default:
+            break
+        }
+    }
+
+    private func startProbe(url: String, startAt: Double, in frame: WKFrameInfo) {
+        // JSON-encode the sniffed URL so it lands in the script as a safely
+        // escaped string literal (the [0] unwraps the single-element array).
+        guard let urlData = try? JSONSerialization.data(withJSONObject: [url]),
+              let urlJSON = String(data: urlData, encoding: .utf8) else { return }
+        let start = "window.__hlsMonitorStartProbe(\(urlJSON)[0], \(startAt));"
+        webView.evaluateJavaScript(
+            "typeof Hls !== 'undefined' && Hls.isSupported()",
+            in: frame, in: .page
+        ) { [weak self] result in
+            guard let self else { return }
+            let hasHls = ((try? result.get()) as? Bool) ?? false
+            let script = hasHls ? start : MonitorScripts.hlsLibrary + "\n" + start
+            self.webView.evaluateJavaScript(script, in: frame, in: .page, completionHandler: nil)
+        }
+    }
+
     /// Kicks the web view's media pipeline back to life after the app returns
     /// from the background (e.g. the phone was locked while a stream played).
     /// WebKit suspends media decoding while backgrounded and doesn't always
@@ -218,13 +262,21 @@ final class BrowserViewModel: NSObject, ObservableObject {
     /// which the injected monitor script intercepts directly. Falls back to the
     /// native engine when hls.js can't load or can't play the stream.
     private func loadInlinePlayer(for url: URL) {
+        // Embed the bundled hls.js rather than referencing a CDN: playback
+        // then can't break on CDN outages, and the player and the AirPlay
+        // monitor probe are guaranteed the same pinned library version.
+        // "</script" cannot legally appear in JS outside a string or regex
+        // literal, where the escaped form parses identically — so this
+        // substitution is safe and keeps the parser from ending the tag.
+        let hlsSource = MonitorScripts.hlsLibrary
+            .replacingOccurrences(of: "</script", with: "<\\/script")
         let html = """
         <!DOCTYPE html><html><head>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="referrer" content="no-referrer">
         <style>body{margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh}
         video{width:100%;max-height:100vh}</style>
-        <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.min.js"></script>
+        <script>\(hlsSource)</script>
         </head>
         <body><video id="player" controls autoplay playsinline x-webkit-airplay="allow"></video>
         <script>
@@ -272,14 +324,15 @@ final class BrowserViewModel: NSObject, ObservableObject {
                 // Feed remuxed audio segments to the injected loudness meter:
                 // WebKit gives the page no PCM access to <video> audio, so
                 // LUFS is measured from the stream content instead.
-                hls.on(Hls.Events.BUFFER_APPENDING, function(_, data) {
+                function forwardAudio(_, data) {
                     if (data.type !== 'audio' || !data.data) { return; }
                     if (data.frag && data.frag.sn === 'initSegment') {
                         if (window.__hlsMonitorAudioInit) { window.__hlsMonitorAudioInit(data.data); }
                     } else if (window.__hlsMonitorAudioChunk) {
                         window.__hlsMonitorAudioChunk(data.data);
                     }
-                });
+                }
+                hls.on(Hls.Events.BUFFER_APPENDING, forwardAudio);
                 // Paused with a comfortable buffer means every further byte
                 // is wasted: stop fetching (segments and live playlist
                 // refreshes) and pick up where we left off on play. While
@@ -312,7 +365,9 @@ final class BrowserViewModel: NSObject, ObservableObject {
                 hls.on(Hls.Events.BUFFER_APPENDED, updateLoadControl);
                 // MSE-fed video (blob: src) cannot AirPlay. When the user
                 // picks an AirPlay target, hand the stream URL to the native
-                // engine so the remote device pulls the HLS itself.
+                // engine so the remote device pulls the HLS itself. The
+                // injected monitor script sees the same target change and
+                // starts its on-device probe to keep monitoring alive.
                 video.addEventListener('webkitcurrentplaybacktargetiswirelesschanged', function() {
                     if (video.webkitCurrentPlaybackTargetIsWireless) { fallBackToNative(); }
                 });
@@ -337,15 +392,17 @@ extension BrowserViewModel: WKNavigationDelegate {
 }
 
 /// Avoids the WKUserContentController retain cycle on the view model.
+/// Passes the source frame along so probe scripts can be evaluated in the
+/// frame the message came from (players often live inside iframes).
 private final class MessageProxy: NSObject, WKScriptMessageHandler {
-    let handler: ([String: Any]) -> Void
-    init(handler: @escaping ([String: Any]) -> Void) {
+    let handler: ([String: Any], WKFrameInfo) -> Void
+    init(handler: @escaping ([String: Any], WKFrameInfo) -> Void) {
         self.handler = handler
     }
     func userContentController(_ userContentController: WKUserContentController,
                                didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any] else { return }
-        handler(body)
+        handler(body, message.frameInfo)
     }
 }
 

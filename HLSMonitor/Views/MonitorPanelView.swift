@@ -45,6 +45,10 @@ struct MonitorPanelView: View {
                 .padding(.top, 10)
                 .padding(.bottom, 6)
 
+            AirPlayStatusBanner(monitor: monitor)
+                .padding(.horizontal)
+                .padding(.bottom, 6)
+
             // Swipeable carousel of monitor cards.
             TabView(selection: $selectedCard) {
                 LiveStatsView(monitor: monitor)
