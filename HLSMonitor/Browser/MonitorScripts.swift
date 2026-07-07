@@ -198,6 +198,10 @@ enum MonitorScripts {
         function recoverPlayback() {
             document.querySelectorAll('video').forEach(function(video) {
                 try {
+                    // Leave AirPlay sessions alone: playback continues on the
+                    // remote device while the app is hidden, and a seek here
+                    // would disrupt it.
+                    if (video.webkitCurrentPlaybackTargetIsWireless) { return; }
                     // Only resume streams that were meant to be playing.
                     var wasPlaying = !video.paused && !video.ended;
                     var live = !isFinite(video.duration) || video.duration === 0;

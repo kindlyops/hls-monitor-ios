@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import UIKit
 import WebKit
 import Combine
 
@@ -64,6 +65,13 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let configuration = WKWebViewConfiguration()
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
+        configuration.allowsAirPlayForMediaPlayback = true
+        // Present the same user agent as Mobile Safari. Streaming sites sniff
+        // the UA and serve in-app web views an MSE player (blob: video source)
+        // that cannot AirPlay; the Safari UA gets the native-HLS code path,
+        // where AirPlay hands the stream URL to the remote device.
+        configuration.applicationNameForUserAgent =
+            "Version/\(UIDevice.current.systemVersion) Mobile/15E148 Safari/604.1"
 
         let contentController = WKUserContentController()
         let script = WKUserScript(
@@ -218,7 +226,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         video{width:100%;max-height:100vh}</style>
         <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.min.js"></script>
         </head>
-        <body><video id="player" controls autoplay playsinline></video>
+        <body><video id="player" controls autoplay playsinline x-webkit-airplay="allow"></video>
         <script>
         (function() {
             var video = document.getElementById('player');
@@ -302,6 +310,12 @@ final class BrowserViewModel: NSObject, ObservableObject {
                 video.addEventListener('pause', updateLoadControl);
                 video.addEventListener('play', updateLoadControl);
                 hls.on(Hls.Events.BUFFER_APPENDED, updateLoadControl);
+                // MSE-fed video (blob: src) cannot AirPlay. When the user
+                // picks an AirPlay target, hand the stream URL to the native
+                // engine so the remote device pulls the HLS itself.
+                video.addEventListener('webkitcurrentplaybacktargetiswirelesschanged', function() {
+                    if (video.webkitCurrentPlaybackTargetIsWireless) { fallBackToNative(); }
+                });
                 hls.loadSource(src);
                 hls.attachMedia(video);
             } else {
