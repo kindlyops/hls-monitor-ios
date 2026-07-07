@@ -272,14 +272,15 @@ final class BrowserViewModel: NSObject, ObservableObject {
                 // Feed remuxed audio segments to the injected loudness meter:
                 // WebKit gives the page no PCM access to <video> audio, so
                 // LUFS is measured from the stream content instead.
-                hls.on(Hls.Events.BUFFER_APPENDING, function(_, data) {
+                function forwardAudio(_, data) {
                     if (data.type !== 'audio' || !data.data) { return; }
                     if (data.frag && data.frag.sn === 'initSegment') {
                         if (window.__hlsMonitorAudioInit) { window.__hlsMonitorAudioInit(data.data); }
                     } else if (window.__hlsMonitorAudioChunk) {
                         window.__hlsMonitorAudioChunk(data.data);
                     }
-                });
+                }
+                hls.on(Hls.Events.BUFFER_APPENDING, forwardAudio);
                 // Paused with a comfortable buffer means every further byte
                 // is wasted: stop fetching (segments and live playlist
                 // refreshes) and pick up where we left off on play. While
@@ -310,11 +311,69 @@ final class BrowserViewModel: NSObject, ObservableObject {
                 video.addEventListener('pause', updateLoadControl);
                 video.addEventListener('play', updateLoadControl);
                 hls.on(Hls.Events.BUFFER_APPENDED, updateLoadControl);
+                // During AirPlay the receiver fetches the HLS itself — no
+                // manifest or segment traffic crosses this page, so metering
+                // and download stats go dark. A hidden muted hls.js instance
+                // keeps pulling the same stream on this device purely for
+                // measurement. Its downloads reflect this device's network,
+                // not the AirPlay receiver's.
+                var probeHls = null;
+                var probeVideo = null;
+                function startMonitorProbe(startAt) {
+                    if (probeHls) { return; }
+                    probeVideo = document.createElement('video');
+                    probeVideo.setAttribute('data-hls-monitor-probe', '');
+                    probeVideo.setAttribute('playsinline', '');
+                    probeVideo.muted = true;
+                    probeVideo.style.cssText =
+                        'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none';
+                    document.body.appendChild(probeVideo);
+                    probeHls = new Hls({
+                        liveDurationInfinity: true,
+                        startPosition: startAt
+                    });
+                    probeHls.on(Hls.Events.BUFFER_APPENDING, forwardAudio);
+                    probeHls.loadSource(src);
+                    probeHls.attachMedia(probeVideo);
+                    var p = probeVideo.play();
+                    if (p && typeof p.catch === 'function') { p.catch(function() {}); }
+                }
+                function stopMonitorProbe() {
+                    if (probeHls) {
+                        try { probeHls.destroy(); } catch (e) {}
+                        probeHls = null;
+                    }
+                    if (probeVideo) {
+                        probeVideo.remove();
+                        probeVideo = null;
+                    }
+                }
+                // Pause the probe with the player so it stops fetching while
+                // the remote side sits paused, and resumes with it.
+                video.addEventListener('pause', function() {
+                    if (probeVideo) { probeVideo.pause(); }
+                });
+                video.addEventListener('play', function() {
+                    if (probeVideo) {
+                        var p = probeVideo.play();
+                        if (p && typeof p.catch === 'function') { p.catch(function() {}); }
+                    }
+                });
                 // MSE-fed video (blob: src) cannot AirPlay. When the user
                 // picks an AirPlay target, hand the stream URL to the native
                 // engine so the remote device pulls the HLS itself.
                 video.addEventListener('webkitcurrentplaybacktargetiswirelesschanged', function() {
-                    if (video.webkitCurrentPlaybackTargetIsWireless) { fallBackToNative(); }
+                    if (video.webkitCurrentPlaybackTargetIsWireless) {
+                        // Capture the VOD position before the fallback swaps
+                        // video.src, which resets currentTime and duration.
+                        // -1 means default: live edge for live, 0 for VOD.
+                        var startAt = (isFinite(video.duration) && video.duration > 0 &&
+                                       video.currentTime > 0) ? video.currentTime : -1;
+                        fallBackToNative();
+                        startMonitorProbe(startAt);
+                    } else {
+                        stopMonitorProbe();
+                    }
                 });
                 hls.loadSource(src);
                 hls.attachMedia(video);

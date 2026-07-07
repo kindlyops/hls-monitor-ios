@@ -202,8 +202,12 @@ enum MonitorScripts {
                     // remote device while the app is hidden, and a seek here
                     // would disrupt it.
                     if (video.webkitCurrentPlaybackTargetIsWireless) { return; }
+                    // The muted AirPlay monitor probe should always run while
+                    // it exists — resume it even if WebKit paused it in the
+                    // background, and keep it out of the recovery event log.
+                    var isProbe = video.hasAttribute('data-hls-monitor-probe');
                     // Only resume streams that were meant to be playing.
-                    var wasPlaying = !video.paused && !video.ended;
+                    var wasPlaying = isProbe || (!video.paused && !video.ended);
                     var live = !isFinite(video.duration) || video.duration === 0;
 
                     // A tiny seek kicks the decoder back to life. For live streams,
@@ -227,7 +231,9 @@ enum MonitorScripts {
                         var p = video.play();
                         if (p && typeof p.catch === 'function') { p.catch(function() {}); }
                     }
-                    post({ type: 'event', name: 'recovered', detail: live ? 'live' : 'vod' });
+                    if (!isProbe) {
+                        post({ type: 'event', name: 'recovered', detail: live ? 'live' : 'vod' });
+                    }
                 } catch (e) {
                     post({ type: 'event', name: 'error', detail: 'recovery failed' });
                 }
@@ -445,7 +451,10 @@ enum MonitorScripts {
         // does not feed segments to this page's meter.
         setInterval(function() {
             if (audioMeter.gotData || audioMeter.unavailableSent) { return; }
-            var video = document.querySelector('video');
+            // An active AirPlay monitor probe will feed audio shortly;
+            // don't declare metering unavailable while one is running.
+            if (document.querySelector('video[data-hls-monitor-probe]')) { return; }
+            var video = document.querySelector('video:not([data-hls-monitor-probe])');
             if (!video || video.paused || !video.currentSrc) { return; }
             if (video.currentSrc.indexOf('blob:') !== 0) {
                 postAudioUnavailable();
@@ -551,7 +560,9 @@ enum MonitorScripts {
         }
 
         function scan() {
-            document.querySelectorAll('video').forEach(watchVideo);
+            // The AirPlay monitor probe is a measurement tap, not playback:
+            // keep it out of event/stall/quality observation.
+            document.querySelectorAll('video:not([data-hls-monitor-probe])').forEach(watchVideo);
         }
 
         var observer = new MutationObserver(scan);
@@ -569,7 +580,7 @@ enum MonitorScripts {
         // ---- periodic playback stats + resource-timing safety net ----
         setInterval(function() {
             scanResourceTiming();
-            var video = document.querySelector('video');
+            var video = document.querySelector('video:not([data-hls-monitor-probe])');
             if (!video) { return; }
             var buffered = 0;
             try {
