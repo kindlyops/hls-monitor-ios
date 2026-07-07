@@ -139,6 +139,64 @@ struct LivePulseHeader: View {
     }
 }
 
+// MARK: - AirPlay status banner
+
+/// Shown only while an AirPlay session changes how monitoring works: stats
+/// either come from the on-device probe replaying the stream, or nothing is
+/// measurable and the banner says exactly why (e.g. the CDN sends no CORS
+/// headers).
+struct AirPlayStatusBanner: View {
+    @ObservedObject var monitor: HLSMonitorViewModel
+
+    var body: some View {
+        if let state = monitor.airplayMonitoring {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "airplay.video")
+                    .font(.callout)
+                    .foregroundStyle(color(for: state))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title(for: state))
+                        .font(.footnote.weight(.semibold))
+                    Text(detail(for: state))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .background(Color("PanelBackground"), in: RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(color(for: state).opacity(0.35))
+            )
+        }
+    }
+
+    private func color(for state: AirPlayMonitoring) -> Color {
+        switch state {
+        case .probing: return .blue
+        case .dark: return .orange
+        }
+    }
+
+    private func title(for state: AirPlayMonitoring) -> String {
+        switch state {
+        case .probing: return "AirPlay — monitoring from this device"
+        case .dark: return "AirPlay — monitoring unavailable"
+        }
+    }
+
+    private func detail(for state: AirPlayMonitoring) -> String {
+        switch state {
+        case .probing:
+            return "The receiver fetches the stream itself; downloads and loudness are measured by replaying the stream on this device's network."
+        case .dark(let reason):
+            return reason
+        }
+    }
+}
+
 // MARK: - Playback card
 
 struct PlaybackCard: View {

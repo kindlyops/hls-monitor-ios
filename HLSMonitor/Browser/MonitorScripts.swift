@@ -8,8 +8,24 @@
 //
 
 import Foundation
+import OSLog
 
 enum MonitorScripts {
+
+    /// Bundled hls.js source (pinned 1.6.16, Apache-2.0). The inline player
+    /// embeds it directly, and the native layer injects it into third-party
+    /// pages to run the AirPlay monitor probe — native injection is exempt
+    /// from a page's Content-Security-Policy, which would block the page
+    /// from loading the library itself.
+    static let hlsLibrary: String = {
+        guard let url = Bundle.main.url(forResource: "hls.min", withExtension: "js"),
+              let source = try? String(contentsOf: url, encoding: .utf8) else {
+            Logger(subsystem: "com.kindlyops.HLSMonitor", category: "monitor")
+                .error("Bundled hls.min.js missing — inline player and AirPlay probe disabled")
+            return ""
+        }
+        return source
+    }()
 
     static let interception = """
     (function() {
@@ -466,8 +482,82 @@ enum MonitorScripts {
             }
         }, 1000);
 
+        // ---- AirPlay monitor probe ----
+        // AirPlay hands the stream URL to the receiver, which fetches the
+        // HLS itself — no manifest or segment traffic crosses this page, so
+        // metering and download stats go dark. While a session is active, a
+        // hidden muted hls.js instance pulls the same stream on this device
+        // purely for measurement. Downloads reflect this device's network,
+        // not the receiver's. hls.js comes from the page (inline player) or
+        // is injected by the native layer, which drives start/stop from the
+        // airplay started/ended messages posted below.
+        var probe = { hls: null, video: null };
+
+        window.__hlsMonitorStartProbe = function(url, startAt) {
+            if (probe.hls || !window.Hls || !Hls.isSupported()) { return; }
+            var el = document.createElement('video');
+            el.setAttribute('data-hls-monitor-probe', '');
+            el.setAttribute('playsinline', '');
+            el.muted = true;
+            el.style.cssText =
+                'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none';
+            document.body.appendChild(el);
+            var hls = new Hls({
+                liveDurationInfinity: true,
+                startPosition: (typeof startAt === 'number' && startAt > 0) ? startAt : -1
+            });
+            hls.on(Hls.Events.BUFFER_APPENDING, function(_, data) {
+                if (data.type !== 'audio' || !data.data) { return; }
+                if (data.frag && data.frag.sn === 'initSegment') {
+                    window.__hlsMonitorAudioInit(data.data);
+                } else {
+                    window.__hlsMonitorAudioChunk(data.data);
+                }
+            });
+            hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                post({ type: 'airplay', state: 'probeActive' });
+            });
+            hls.on(Hls.Events.ERROR, function(_, data) {
+                if (!data.fatal) { return; }
+                var reason = 'error';
+                if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                    var status = data.response && data.response.code;
+                    // Status 0 on a stream that plays fine natively almost
+                    // always means the CDN answered without CORS headers,
+                    // so page JavaScript may not read the response.
+                    reason = status ? ('HTTP ' + status) : 'cors';
+                } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                    reason = 'media';
+                }
+                window.__hlsMonitorStopProbe();
+                post({ type: 'airplay', state: 'probeFailed', reason: reason });
+            });
+            hls.loadSource(url);
+            hls.attachMedia(el);
+            probe.hls = hls;
+            probe.video = el;
+            var p = el.play();
+            if (p && typeof p.catch === 'function') { p.catch(function() {}); }
+        };
+
+        window.__hlsMonitorStopProbe = function() {
+            if (probe.hls) {
+                try { probe.hls.destroy(); } catch (e) {}
+                probe.hls = null;
+            }
+            if (probe.video) {
+                probe.video.remove();
+                probe.video = null;
+            }
+        };
+
         // ---- video element observation ----
         var watchedVideos = new WeakSet();
+        // Last playhead position seen on a finite-duration (VOD) stream.
+        // Read when AirPlay starts: in-page players may swap their MSE
+        // source for a native URL first, which resets currentTime before
+        // the airplay message below can capture it.
+        var lastKnownVodTime = -1;
 
         function checkSrc(el) {
             var src = el.currentSrc || el.src || '';
@@ -557,6 +647,40 @@ enum MonitorScripts {
                 var err = video.error;
                 post({ type: 'event', name: 'error', detail: err ? ('code ' + err.code) : 'unknown' });
             });
+
+            // AirPlay start/end. A blob-fed (MSE) video cannot AirPlay, so
+            // whenever a session is actually running, currentSrc must hold a
+            // real URL — that URL is what the on-device probe replays. The
+            // delay gives in-page players (including the inline player) time
+            // to swap their MSE source for the native URL first.
+            video.addEventListener('webkitcurrentplaybacktargetiswirelesschanged', function() {
+                if (video.webkitCurrentPlaybackTargetIsWireless) {
+                    var startAt = (isFinite(video.duration) && video.duration > 0 &&
+                                   video.currentTime > 0) ? video.currentTime : lastKnownVodTime;
+                    setTimeout(function() {
+                        if (!video.webkitCurrentPlaybackTargetIsWireless) { return; }
+                        var src = video.currentSrc || video.src || '';
+                        var url = (src.indexOf('blob:') !== 0 && classify(src) === 'manifest')
+                            ? absolute(src) : '';
+                        post({ type: 'airplay', state: 'started', url: url, startAt: startAt });
+                    }, 500);
+                } else {
+                    post({ type: 'airplay', state: 'ended' });
+                }
+            });
+            // The probe only measures what a viewer would receive: pause it
+            // while the AirPlay side sits paused, resume it with playback.
+            video.addEventListener('pause', function() {
+                if (video.webkitCurrentPlaybackTargetIsWireless && probe.video) {
+                    probe.video.pause();
+                }
+            });
+            video.addEventListener('play', function() {
+                if (video.webkitCurrentPlaybackTargetIsWireless && probe.video) {
+                    var p = probe.video.play();
+                    if (p && typeof p.catch === 'function') { p.catch(function() {}); }
+                }
+            });
         }
 
         function scan() {
@@ -596,6 +720,9 @@ enum MonitorScripts {
                     total = q.totalVideoFrames;
                 }
             } catch (e) {}
+            if (isFinite(video.duration) && video.duration > 0 && video.currentTime > 0) {
+                lastKnownVodTime = video.currentTime;
+            }
             post({
                 type: 'stats',
                 width: video.videoWidth,
