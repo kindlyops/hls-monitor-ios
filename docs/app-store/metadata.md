@@ -151,4 +151,6 @@ the empty browser screen and the monitor starts automatically.
       you'll need your team + App Store profile
 - [ ] `NSAllowsArbitraryLoads` is enabled — keep the review note above, or
       scope it down if your streams are all HTTPS
-- [ ] Version is 1.0 (build 1) from MARKETING_VERSION — bump per release
+- [ ] Version is 1.1 (build 2) from MARKETING_VERSION — bump per release
+      (App Store Connect closes a version's train once it is approved or
+      released; uploading to a closed train fails with ITMS-90186)
